@@ -1,26 +1,22 @@
 import { useEffect, useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
+
+const CATEGORIES = ["coulisses", "creative", "chat", "public", "dons", "general"]
 
 export default function Admin() {
-  const [adminKey, setAdminKey] = useState(localStorage.getItem("bingoAdminKey") || "")
+  const navigate = useNavigate()
   const [debug, setDebug] = useState(null)
   const [events, setEvents] = useState([])
   const [newEventName, setNewEventName] = useState("")
+  const [newEventCategory, setNewEventCategory] = useState("general")
   const [editingId, setEditingId] = useState(null)
   const [editingName, setEditingName] = useState("")
+  const [editingCategory, setEditingCategory] = useState("general")
   const [triggerName, setTriggerName] = useState("")
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
 
-  useEffect(() => {
-    localStorage.setItem("bingoAdminKey", adminKey)
-  }, [adminKey])
-
-  useEffect(() => {
-    if (adminKey) {
-      loadDashboard()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const adminKey = localStorage.getItem("bingoAdminKey") || ""
 
   const authHeaders = useMemo(
     () => ({
@@ -48,7 +44,7 @@ export default function Admin() {
       if (!debugCall.response.ok || !eventsCall.response.ok) {
         setDebug(null)
         setEvents([])
-        setStatus("Acces refuse: verifie ADMIN_KEY")
+        setStatus("Session invalide: reconnecte-toi")
         return
       }
 
@@ -60,6 +56,15 @@ export default function Admin() {
     }
   }
 
+  useEffect(() => {
+    if (!adminKey) {
+      navigate("/admin/login", { replace: true })
+      return
+    }
+    loadDashboard()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   async function addEvent() {
     if (!newEventName.trim()) return
     setLoading(true)
@@ -68,7 +73,7 @@ export default function Admin() {
       const { response, data } = await fetchJson("/api/admin/events", {
         method: "POST",
         headers: authHeaders,
-        body: JSON.stringify({ name: newEventName })
+        body: JSON.stringify({ name: newEventName, category: newEventCategory })
       })
 
       if (!response.ok || !data.ok) {
@@ -77,6 +82,7 @@ export default function Admin() {
       }
 
       setNewEventName("")
+      setNewEventCategory("general")
       setStatus("Evenement ajoute (cartes regenerees)")
       await loadDashboard()
     } finally {
@@ -92,7 +98,7 @@ export default function Admin() {
       const { response, data } = await fetchJson(`/api/admin/events/${id}`, {
         method: "PATCH",
         headers: authHeaders,
-        body: JSON.stringify({ name: editingName })
+        body: JSON.stringify({ name: editingName, category: editingCategory })
       })
 
       if (!response.ok || !data.ok) {
@@ -102,6 +108,7 @@ export default function Admin() {
 
       setEditingId(null)
       setEditingName("")
+      setEditingCategory("general")
       setStatus("Intitule mis a jour (cartes regenerees)")
       await loadDashboard()
     } finally {
@@ -174,6 +181,11 @@ export default function Admin() {
     }
   }
 
+  function logout() {
+    localStorage.removeItem("bingoAdminKey")
+    navigate("/admin/login", { replace: true })
+  }
+
   return (
     <div className="admin-shell">
       <div className="admin-header">
@@ -181,21 +193,20 @@ export default function Admin() {
           <h1>Live Dashboard</h1>
           <p>Gestion des evenements, du round et du debug live.</p>
         </div>
-        <button className="btn ghost" onClick={loadDashboard} disabled={loading}>
-          {loading ? "Chargement..." : "Rafraichir"}
-        </button>
+        <div className="row">
+          <button className="btn ghost" onClick={loadDashboard} disabled={loading}>
+            {loading ? "Chargement..." : "Rafraichir"}
+          </button>
+          <button className="btn ghost" onClick={logout}>
+            Deconnexion
+          </button>
+        </div>
       </div>
 
       <div className="admin-grid">
         <section className="panel">
-          <h2>Acces securise</h2>
-          <input
-            className="input"
-            placeholder="ADMIN_KEY"
-            value={adminKey}
-            onChange={(e) => setAdminKey(e.target.value)}
-          />
-          <p className="hint">La cle est envoyee dans le header x-admin-key.</p>
+          <h2>Session</h2>
+          <p className="hint">Dashboard protege par ADMIN_KEY. Session locale active.</p>
         </section>
 
         <section className="panel">
@@ -259,6 +270,19 @@ export default function Admin() {
             Ajouter
           </button>
         </div>
+        <div className="row">
+          <select
+            className="input"
+            value={newEventCategory}
+            onChange={(e) => setNewEventCategory(e.target.value)}
+          >
+            {CATEGORIES.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
+        </div>
       </section>
 
       <section className="panel">
@@ -269,13 +293,28 @@ export default function Admin() {
               <span className={event.triggered ? "pill on" : "pill"}>{event.triggered ? "On" : "Off"}</span>
 
               {editingId === event.id ? (
-                <input
-                  className="input"
-                  value={editingName}
-                  onChange={(e) => setEditingName(e.target.value)}
-                />
+                <div className="row">
+                  <input
+                    className="input"
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                  />
+                  <select
+                    className="input"
+                    value={editingCategory}
+                    onChange={(e) => setEditingCategory(e.target.value)}
+                  >
+                    {CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               ) : (
-                <span className="event-name">{event.name}</span>
+                <span className="event-name">
+                  {event.name} <small className="event-category">[{event.category}]</small>
+                </span>
               )}
 
               {editingId === event.id ? (
@@ -296,11 +335,12 @@ export default function Admin() {
               ) : (
                 <button
                   className="btn ghost"
-                  onClick={() => {
-                    setEditingId(event.id)
-                    setEditingName(event.name)
-                  }}
-                  disabled={loading}
+                    onClick={() => {
+                      setEditingId(event.id)
+                      setEditingName(event.name)
+                      setEditingCategory(event.category || "general")
+                    }}
+                    disabled={loading}
                 >
                   Editer
                 </button>

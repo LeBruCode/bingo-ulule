@@ -29,6 +29,14 @@ const ROWS = 4
 const COLS = 5
 const SIZE = ROWS * COLS
 const MAX_CARDS = Number(process.env.MAX_CARDS || 5000)
+const ALLOWED_CATEGORIES = new Set([
+  "coulisses",
+  "creative",
+  "chat",
+  "public",
+  "dons",
+  "general"
+])
 
 let events = []
 let eventNames = []
@@ -50,6 +58,13 @@ function isAdmin(req) {
   const adminKey = process.env.ADMIN_KEY
   const providedKey = req.headers["x-admin-key"]
   return Boolean(adminKey) && providedKey === adminKey
+}
+
+function normalizeCategory(value) {
+  if (typeof value !== "string") return "general"
+  const normalized = value.trim().toLowerCase()
+  if (!ALLOWED_CATEGORIES.has(normalized)) return "general"
+  return normalized
 }
 
 async function requireAdmin(req, reply) {
@@ -207,6 +222,7 @@ async function loadEvents() {
     .map((e) => ({
       id: e.id,
       name: typeof e.name === "string" ? e.name.trim() : "",
+      category: normalizeCategory(e.category),
       created_at: e.created_at
     }))
     .filter((e) => e.name)
@@ -268,12 +284,19 @@ fastify.get("/api/admin/debug", { preHandler: requireAdmin }, async () => {
 })
 
 fastify.get("/api/admin/events", { preHandler: requireAdmin }, async () => {
+  const byCategory = {}
+  for (const event of events) {
+    byCategory[event.category] = (byCategory[event.category] || 0) + 1
+  }
+
   return {
     total: events.length,
     triggered: triggered.length,
+    byCategory,
     events: events.map((row) => ({
       id: row.id,
       name: row.name,
+      category: row.category,
       created_at: row.created_at,
       triggered: triggeredSet.has(row.name)
     }))
@@ -302,6 +325,7 @@ fastify.post("/api/admin/reset-round", { preHandler: requireAdmin }, async () =>
 
 fastify.post("/api/admin/events", { preHandler: requireAdmin }, async (req, reply) => {
   const name = req.body?.name
+  const category = normalizeCategory(req.body?.category)
   if (typeof name !== "string") {
     reply.code(400)
     return { ok: false, error: "invalid_name" }
@@ -318,7 +342,9 @@ fastify.post("/api/admin/events", { preHandler: requireAdmin }, async (req, repl
     return { ok: false, error: "duplicate_name" }
   }
 
-  const { error } = await supabase.from("events").insert([{ name: normalizedName }])
+  const { error } = await supabase
+    .from("events")
+    .insert([{ name: normalizedName, category }])
   if (error) {
     fastify.log.error({ error }, "Error creating event")
     reply.code(500)
@@ -342,26 +368,35 @@ fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req,
     return { ok: false, error: "invalid_id" }
   }
 
-  const name = req.body?.name
-  if (typeof name !== "string") {
-    reply.code(400)
-    return { ok: false, error: "invalid_name" }
+  const updates = {}
+
+  if (typeof req.body?.name === "string") {
+    const normalizedName = req.body.name.trim()
+    if (!normalizedName || normalizedName.length > 120) {
+      reply.code(400)
+      return { ok: false, error: "invalid_name" }
+    }
+
+    if (events.some((e) => e.id !== id && e.name.toLowerCase() === normalizedName.toLowerCase())) {
+      reply.code(409)
+      return { ok: false, error: "duplicate_name" }
+    }
+
+    updates.name = normalizedName
   }
 
-  const normalizedName = name.trim()
-  if (!normalizedName || normalizedName.length > 120) {
-    reply.code(400)
-    return { ok: false, error: "invalid_name" }
+  if (typeof req.body?.category === "string") {
+    updates.category = normalizeCategory(req.body.category)
   }
 
-  if (events.some((e) => e.id !== id && e.name.toLowerCase() === normalizedName.toLowerCase())) {
-    reply.code(409)
-    return { ok: false, error: "duplicate_name" }
+  if (Object.keys(updates).length === 0) {
+    reply.code(400)
+    return { ok: false, error: "no_update" }
   }
 
   const { data, error } = await supabase
     .from("events")
-    .update({ name: normalizedName })
+    .update(updates)
     .eq("id", id)
     .select("id")
 
