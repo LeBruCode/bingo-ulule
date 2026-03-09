@@ -35,7 +35,7 @@ export default function AdminManage() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson("/api/admin/events")
+      const { response, data } = await fetchJson("/api/backend-bruno/events")
 
       if (!response.ok) {
         if (response.status === 403) {
@@ -91,7 +91,7 @@ export default function AdminManage() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson("/api/admin/events", {
+      const { response, data } = await fetchJson("/api/backend-bruno/events", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -122,7 +122,7 @@ export default function AdminManage() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson(`/api/admin/events/${id}`, {
+      const { response, data } = await fetchJson(`/api/backend-bruno/events/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

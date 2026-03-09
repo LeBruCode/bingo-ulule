@@ -92,6 +92,8 @@ const ululeSyncState = {
 }
 let progressStatsCache = null
 let progressStatsDirty = true
+let campaignEndAtMs = Number.isFinite(Date.parse(process.env.CAMPAIGN_END_AT || "")) ? Date.parse(process.env.CAMPAIGN_END_AT) : null
+let liveStreamUrl = typeof process.env.LIVE_STREAM_URL === "string" ? process.env.LIVE_STREAM_URL.trim() : ""
 
 function boardSize() {
   return ROWS * COLS
@@ -212,7 +214,7 @@ async function requireAdmin(req, reply) {
   }
 }
 
-fastify.post("/api/admin/login", async (req, reply) => {
+fastify.post("/api/backend-bruno/login", async (req, reply) => {
   const adminKey = process.env.ADMIN_KEY
   const provided = typeof req.body?.adminKey === "string" ? req.body.adminKey.trim() : ""
   if (!adminKey || provided !== adminKey) {
@@ -225,7 +227,7 @@ fastify.post("/api/admin/login", async (req, reply) => {
   return { ok: true }
 })
 
-fastify.post("/api/admin/logout", async (req, reply) => {
+fastify.post("/api/backend-bruno/logout", async (req, reply) => {
   clearAdminSession(req)
   reply.header("set-cookie", buildAdminCookieClear(req))
   return { ok: true }
@@ -266,6 +268,8 @@ function serializeState() {
   return {
     gameVersion,
     board: serializeBoardConfig(),
+    campaign: serializeCampaign(),
+    liveStream: serializeLiveStream(),
     phase: {
       targetTier: currentTargetTier,
       targetLabel:
@@ -278,6 +282,23 @@ function serializeState() {
     },
     triggered,
     winners: serializeWinners()
+  }
+}
+
+function serializeCampaign() {
+  if (!campaignEndAtMs) return { endAt: null, remainingMs: null, isEnded: false }
+  const now = Date.now()
+  const remainingMs = Math.max(0, campaignEndAtMs - now)
+  return {
+    endAt: new Date(campaignEndAtMs).toISOString(),
+    remainingMs,
+    isEnded: remainingMs === 0
+  }
+}
+
+function serializeLiveStream() {
+  return {
+    url: liveStreamUrl || null
   }
 }
 
@@ -653,6 +674,8 @@ function getDebugState() {
     targetLabel:
       currentTargetTier === ROWS ? `Carton plein (${ROWS} lignes)` : `${currentTargetTier} ligne${currentTargetTier > 1 ? "s" : ""}`,
     tierLocked: (winners[currentTargetTier - 1]?.size || 0) > 0,
+    campaign: serializeCampaign(),
+    liveStream: serializeLiveStream(),
     ulule: getUluleStatus(),
     raffle: serializeRaffleSummary(),
     progressByLine: getProgressStatsByLine(),
@@ -683,6 +706,27 @@ function parseOrderTotalCents(order) {
 function hasOrderReward(order) {
   const items = Array.isArray(order?.items) ? order.items : []
   return items.some((item) => Boolean(item?.reward_id || item?.reward?.id))
+}
+
+function parseItemAmountCents(item) {
+  const raw =
+    item?.price ??
+    item?.amount ??
+    item?.unit_price ??
+    item?.reward?.price ??
+    item?.reward?.amount
+  const value = Number(raw)
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+}
+
+function hasEligibleFigurationReward(order) {
+  const items = Array.isArray(order?.items) ? order.items : []
+  return items.some((item) => {
+    const rewardName = String(item?.reward?.name || item?.reward?.title || item?.name || "").toLowerCase()
+    const looksLikeFigurationPack = rewardName.includes("figuration")
+    const amountCents = parseItemAmountCents(item)
+    return looksLikeFigurationPack && amountCents >= ULULE_MIN_CONTRIBUTION_CENTS
+  })
 }
 
 function findOrderEmail(order) {
@@ -721,8 +765,9 @@ function upsertUluleEligible(order, nowMs) {
   if (!email) return false
 
   const totalCents = parseOrderTotalCents(order)
-  const reward = hasOrderReward(order)
-  const eligible = reward || totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
+  const eligibleReward = hasEligibleFigurationReward(order)
+  const eligibleDonation = !hasOrderReward(order) && totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
+  const eligible = eligibleReward || eligibleDonation
   if (!eligible) return false
 
   const orderTime = parseOrderTimestampMs(order)
@@ -730,14 +775,14 @@ function upsertUluleEligible(order, nowMs) {
   const next = existing
     ? {
         ...existing,
-        hasReward: existing.hasReward || reward,
+        hasReward: existing.hasReward || eligibleReward,
         maxTotalCents: Math.max(existing.maxTotalCents || 0, totalCents),
         lastSeenMs: Math.max(existing.lastSeenMs || 0, orderTime),
         updatedAtMs: nowMs
       }
     : {
         email,
-        hasReward: reward,
+        hasReward: eligibleReward,
         maxTotalCents: totalCents,
         lastSeenMs: orderTime,
         updatedAtMs: nowMs
@@ -904,6 +949,9 @@ function serializeRaffleTier(tier) {
   const entries = [...entriesMap.values()].map((entry) => ({
     id: entry.id,
     email: entry.email,
+    firstName: entry.firstName || "",
+    phone: entry.phone || "",
+    playerToken: entry.playerToken || "",
     ulule: entry.ulule || null,
     source: entry.source,
     createdAt: entry.createdAt
@@ -933,7 +981,17 @@ function serializeRaffleSummary() {
   }
 }
 
-function addRaffleEntry({ tier, email, source = "manual", ulule = null }) {
+function normalizeFirstName(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().slice(0, 80)
+}
+
+function normalizePhone(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().slice(0, 30)
+}
+
+function addRaffleEntry({ tier, email, source = "manual", ulule = null, firstName = "", phone = "", playerToken = "" }) {
   const tierIndex = tier - 1
   const entriesMap = raffleEntriesByTier[tierIndex]
   const normalizedEmail = normalizeRaffleEmail(email)
@@ -952,6 +1010,9 @@ function addRaffleEntry({ tier, email, source = "manual", ulule = null }) {
   const entry = {
     id: `r${raffleEntrySeq++}`,
     email: normalizedEmail,
+    firstName: normalizeFirstName(firstName),
+    phone: normalizePhone(phone),
+    playerToken: typeof playerToken === "string" ? playerToken.slice(0, 120) : "",
     ulule,
     source,
     createdAt: new Date().toISOString()
@@ -1010,15 +1071,63 @@ function serializeAdminEvents() {
   }))
 }
 
-fastify.get("/api/admin/debug", { preHandler: requireAdmin }, async () => {
+fastify.get("/api/backend-bruno/debug", { preHandler: requireAdmin }, async () => {
   return getDebugState()
 })
 
-fastify.get("/api/admin/ulule/status", { preHandler: requireAdmin }, async () => {
+fastify.patch("/api/backend-bruno/campaign-end", { preHandler: requireAdmin }, async (req, reply) => {
+  const endAt = req.body?.endAt
+  if (endAt === null || endAt === "") {
+    campaignEndAtMs = null
+    io.emit("state", serializeState())
+    return { ok: true, campaign: serializeCampaign() }
+  }
+
+  if (typeof endAt !== "string") {
+    reply.code(400)
+    return { ok: false, error: "invalid_end_at" }
+  }
+
+  const parsed = Date.parse(endAt)
+  if (!Number.isFinite(parsed)) {
+    reply.code(400)
+    return { ok: false, error: "invalid_end_at" }
+  }
+
+  campaignEndAtMs = parsed
+  io.emit("state", serializeState())
+  return { ok: true, campaign: serializeCampaign() }
+})
+
+fastify.patch("/api/backend-bruno/live-stream", { preHandler: requireAdmin }, async (req, reply) => {
+  const url = req.body?.url
+  if (url === null || url === "") {
+    liveStreamUrl = ""
+    io.emit("state", serializeState())
+    return { ok: true, liveStream: serializeLiveStream() }
+  }
+
+  if (typeof url !== "string") {
+    reply.code(400)
+    return { ok: false, error: "invalid_url" }
+  }
+
+  const normalized = url.trim()
+  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    reply.code(400)
+    return { ok: false, error: "invalid_url" }
+  }
+
+  liveStreamUrl = normalized
+  io.emit("state", serializeState())
+  return { ok: true, liveStream: serializeLiveStream() }
+})
+
+fastify.get("/api/backend-bruno/ulule/status", { preHandler: requireAdmin }, async () => {
   return { ok: true, ulule: getUluleStatus() }
 })
 
-fastify.post("/api/admin/ulule/live-mode", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.post("/api/backend-bruno/ulule/live-mode", { preHandler: requireAdmin }, async (req, reply) => {
   if (typeof req.body?.enabled !== "boolean") {
     reply.code(400)
     return { ok: false, error: "invalid_enabled" }
@@ -1028,7 +1137,7 @@ fastify.post("/api/admin/ulule/live-mode", { preHandler: requireAdmin }, async (
   return { ok: true, ulule: getUluleStatus() }
 })
 
-fastify.post("/api/admin/ulule/sync-now", { preHandler: requireAdmin }, async () => {
+fastify.post("/api/backend-bruno/ulule/sync-now", { preHandler: requireAdmin }, async () => {
   const result = await syncUluleDelta({ reason: "manual" })
   scheduleUluleSync(currentUluleIntervalMs())
   return {
@@ -1038,7 +1147,7 @@ fastify.post("/api/admin/ulule/sync-now", { preHandler: requireAdmin }, async ()
   }
 })
 
-fastify.get("/api/admin/events", { preHandler: requireAdmin }, async () => {
+fastify.get("/api/backend-bruno/events", { preHandler: requireAdmin }, async () => {
   const byCategory = {}
   for (const event of events) {
     byCategory[event.category] = (byCategory[event.category] || 0) + 1
@@ -1053,7 +1162,7 @@ fastify.get("/api/admin/events", { preHandler: requireAdmin }, async () => {
   }
 })
 
-fastify.get("/api/admin/bootstrap", { preHandler: requireAdmin }, async () => {
+fastify.get("/api/backend-bruno/bootstrap", { preHandler: requireAdmin }, async () => {
   const byCategory = {}
   for (const event of events) {
     byCategory[event.category] = (byCategory[event.category] || 0) + 1
@@ -1075,7 +1184,7 @@ fastify.get("/api/admin/bootstrap", { preHandler: requireAdmin }, async () => {
   }
 })
 
-fastify.get("/api/admin/activation-log", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.get("/api/backend-bruno/activation-log", { preHandler: requireAdmin }, async (req, reply) => {
   const limit = Number(req.query?.limit || 200)
   if (!Number.isInteger(limit) || limit < 1 || limit > 2000) {
     reply.code(400)
@@ -1090,7 +1199,7 @@ fastify.get("/api/admin/activation-log", { preHandler: requireAdmin }, async (re
   }
 })
 
-fastify.post("/api/admin/reload", { preHandler: requireAdmin }, async () => {
+fastify.post("/api/backend-bruno/reload", { preHandler: requireAdmin }, async () => {
   const ok = await bootstrapGameData()
   if (!ok) {
     return {
@@ -1105,7 +1214,7 @@ fastify.post("/api/admin/reload", { preHandler: requireAdmin }, async () => {
   }
 })
 
-fastify.patch("/api/admin/board", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.patch("/api/backend-bruno/board", { preHandler: requireAdmin }, async (req, reply) => {
   const nextRows = Number(req.body?.rows)
   const nextCols = Number(req.body?.cols)
 
@@ -1150,7 +1259,7 @@ fastify.patch("/api/admin/board", { preHandler: requireAdmin }, async (req, repl
   return { ok: true, board: serializeBoardConfig(), gameVersion }
 })
 
-fastify.post("/api/admin/target-tier", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.post("/api/backend-bruno/target-tier", { preHandler: requireAdmin }, async (req, reply) => {
   const tier = Number(req.body?.tier)
   if (!Number.isInteger(tier) || tier < 1 || tier > ROWS) {
     reply.code(400)
@@ -1173,7 +1282,7 @@ fastify.post("/api/admin/target-tier", { preHandler: requireAdmin }, async (req,
   return { ok: true, debug: getDebugState() }
 })
 
-fastify.get("/api/admin/raffle", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.get("/api/backend-bruno/raffle", { preHandler: requireAdmin }, async (req, reply) => {
   const tier = parseTierInput(req.query?.tier)
   if (!tier) {
     reply.code(400)
@@ -1182,7 +1291,7 @@ fastify.get("/api/admin/raffle", { preHandler: requireAdmin }, async (req, reply
   return { ok: true, ...serializeRaffleTier(tier) }
 })
 
-fastify.post("/api/admin/raffle/enter", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.post("/api/backend-bruno/raffle/enter", { preHandler: requireAdmin }, async (req, reply) => {
   const tier = parseTierInput(req.body?.tier)
   if (!tier) {
     reply.code(400)
@@ -1203,6 +1312,9 @@ fastify.post("/api/admin/raffle/enter", { preHandler: requireAdmin }, async (req
     tier,
     email: req.body?.email,
     source: "manual",
+    firstName: req.body?.firstName,
+    phone: req.body?.phone,
+    playerToken: req.body?.token,
     ulule: {
       verifiedAt: new Date().toISOString(),
       hasReward: Boolean(ululeCheck.hasReward),
@@ -1223,7 +1335,66 @@ fastify.post("/api/admin/raffle/enter", { preHandler: requireAdmin }, async (req
   }
 })
 
-fastify.post("/api/admin/raffle/mock", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.post("/api/raffle/enter", async (req, reply) => {
+  const tier = parseTierInput(req.body?.tier)
+  if (!tier) {
+    reply.code(400)
+    return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
+  }
+
+  const firstName = normalizeFirstName(req.body?.firstName)
+  const phone = normalizePhone(req.body?.phone)
+  const email = normalizeRaffleEmail(req.body?.email)
+  const playerToken = typeof req.body?.token === "string" ? req.body.token : ""
+
+  if (!firstName || !phone || !email) {
+    reply.code(400)
+    return { ok: false, error: "missing_fields" }
+  }
+
+  const tierWinners = winners[tier - 1]
+  if (!tierWinners || !tierWinners.has(playerToken)) {
+    reply.code(403)
+    return { ok: false, error: "not_qualified_for_tier" }
+  }
+
+  const ululeCheck = checkUluleEligibility(email)
+  if (!ululeCheck.ok) {
+    reply.code(500)
+    return { ok: false, error: ululeCheck.error || "ulule_check_failed" }
+  }
+  if (!ululeCheck.eligible) {
+    reply.code(400)
+    return { ok: false, error: "not_ulule_eligible", nextSyncAt: ululeSyncState.nextRunAt }
+  }
+
+  const outcome = addRaffleEntry({
+    tier,
+    email,
+    firstName,
+    phone,
+    playerToken,
+    source: "player",
+    ulule: {
+      verifiedAt: new Date().toISOString(),
+      hasReward: Boolean(ululeCheck.hasReward),
+      orderTotalCents: Number(ululeCheck.orderTotalCents || 0)
+    }
+  })
+
+  if (!outcome.ok) {
+    reply.code(400)
+    return { ok: false, error: outcome.error || "enter_failed" }
+  }
+
+  return {
+    ok: true,
+    duplicated: Boolean(outcome.duplicated),
+    entry: outcome.entry
+  }
+})
+
+fastify.post("/api/backend-bruno/raffle/mock", { preHandler: requireAdmin }, async (req, reply) => {
   const tier = parseTierInput(req.body?.tier)
   if (!tier) {
     reply.code(400)
@@ -1253,7 +1424,7 @@ fastify.post("/api/admin/raffle/mock", { preHandler: requireAdmin }, async (req,
   }
 })
 
-fastify.post("/api/admin/raffle/draw", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.post("/api/backend-bruno/raffle/draw", { preHandler: requireAdmin }, async (req, reply) => {
   const tier = parseTierInput(req.body?.tier)
   if (!tier) {
     reply.code(400)
@@ -1292,13 +1463,13 @@ fastify.post("/api/admin/raffle/draw", { preHandler: requireAdmin }, async (req,
   }
 })
 
-fastify.post("/api/admin/reset-round", { preHandler: requireAdmin }, async () => {
+fastify.post("/api/backend-bruno/reset-round", { preHandler: requireAdmin }, async () => {
   clearRoundProgress()
   io.emit("state", serializeState())
   return { ok: true }
 })
 
-fastify.post("/api/admin/events", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.post("/api/backend-bruno/events", { preHandler: requireAdmin }, async (req, reply) => {
   const name = req.body?.name
   const category = normalizeCategory(req.body?.category)
   const isMandatory = Boolean(req.body?.is_mandatory)
@@ -1337,7 +1508,7 @@ fastify.post("/api/admin/events", { preHandler: requireAdmin }, async (req, repl
   return { ok: true, gameReset: true }
 })
 
-fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.patch("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, async (req, reply) => {
   const id = Number(req.params?.id)
   if (!Number.isInteger(id) || id <= 0) {
     reply.code(400)
@@ -1439,9 +1610,9 @@ async function handleTrigger(req, reply) {
   return { ok: true }
 }
 
-fastify.post("/api/admin/trigger", { preHandler: requireAdmin }, handleTrigger)
+fastify.post("/api/backend-bruno/trigger", { preHandler: requireAdmin }, handleTrigger)
 
-fastify.post("/api/admin/events/:id/toggle", { preHandler: requireAdmin }, async (req, reply) => {
+fastify.post("/api/backend-bruno/events/:id/toggle", { preHandler: requireAdmin }, async (req, reply) => {
   const id = Number(req.params?.id)
   if (!Number.isInteger(id) || id <= 0) {
     reply.code(400)
@@ -1465,7 +1636,7 @@ fastify.post("/api/admin/events/:id/toggle", { preHandler: requireAdmin }, async
   }
 
   io.emit("state", serializeState())
-  return { ok: true, state: serializeState() }
+  return { ok: true, state: serializeState(), debug: getDebugState() }
 })
 
 // Backward compatibility for existing frontend.

@@ -14,7 +14,7 @@ export default function AdminLogin() {
     setError("")
 
     try {
-      const response = await fetch("/api/admin/login", {
+      const response = await fetch("/api/backend-bruno/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ adminKey: adminKey.trim() })

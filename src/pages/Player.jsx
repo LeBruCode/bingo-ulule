@@ -13,8 +13,15 @@ export default function Player(){
 
 const [card,setCard]=useState(null)
 const [state,setState]=useState(null)
+const [nowMs,setNowMs]=useState(Date.now())
 const [socketError,setSocketError]=useState("")
 const [freshCells,setFreshCells]=useState(new Set())
+const [raffleOpen,setRaffleOpen]=useState(false)
+const [raffleLoading,setRaffleLoading]=useState(false)
+const [raffleStatus,setRaffleStatus]=useState("")
+const [raffleFirstName,setRaffleFirstName]=useState("")
+const [rafflePhone,setRafflePhone]=useState("")
+const [raffleEmail,setRaffleEmail]=useState("")
 const previousTriggeredRef = useRef(new Set())
 const vibrationTimeoutRef = useRef(null)
 const hapticsUnlockedRef = useRef(false)
@@ -73,6 +80,11 @@ return ()=>{
  window.removeEventListener("keydown",unlockHaptics)
 }
 
+},[])
+
+useEffect(()=>{
+ const interval = setInterval(()=>setNowMs(Date.now()),1000)
+ return ()=>clearInterval(interval)
 },[])
 
 useEffect(()=>{
@@ -138,14 +150,123 @@ function winnerTokensForTier(tier){
 }
 
 const wonTier = tierProgress.find(({tier})=>winnerTokensForTier(tier).includes(token))
+const campaignEndAtMs = state?.campaign?.endAt ? Date.parse(state.campaign.endAt) : null
+const campaignRemainingMs = campaignEndAtMs ? Math.max(0,campaignEndAtMs - nowMs) : null
+const liveStreamUrl = state?.liveStream?.url || ""
+
+function parseYouTubeVideoId(rawUrl){
+ if(typeof rawUrl!=="string" || !rawUrl.trim()) return ""
+ try{
+  const url = new URL(rawUrl)
+  const host = url.hostname.replace(/^www\./,"")
+  if(host==="youtu.be"){
+   return url.pathname.replace("/","").trim()
+  }
+  if(host==="youtube.com" || host==="m.youtube.com"){
+   const fromQuery = url.searchParams.get("v")
+   if(fromQuery) return fromQuery
+   const pathParts = url.pathname.split("/").filter(Boolean)
+   const liveIndex = pathParts.indexOf("live")
+   if(liveIndex!==-1 && pathParts[liveIndex+1]) return pathParts[liveIndex+1]
+  }
+ }catch{
+  return ""
+ }
+ return ""
+}
+
+function openLiveLink(){
+ if(!liveStreamUrl) return
+ if(typeof window==="undefined") return
+
+ const ua = navigator.userAgent || ""
+ const isAndroid = /Android/i.test(ua)
+ const isIOS = /iPhone|iPad|iPod/i.test(ua)
+ const isMobile = isAndroid || isIOS
+ const videoId = parseYouTubeVideoId(liveStreamUrl)
+
+ if(!isMobile){
+  window.open(liveStreamUrl,"_blank","noopener,noreferrer")
+  return
+ }
+
+ let mobileTarget = liveStreamUrl
+ if(isAndroid && videoId){
+  mobileTarget = `intent://www.youtube.com/watch?v=${videoId}#Intent;package=com.google.android.youtube;scheme=https;end`
+ }else if(isIOS && videoId){
+  mobileTarget = `youtube://www.youtube.com/watch?v=${videoId}`
+ }
+
+ const opened = window.open(mobileTarget,"_blank","noopener,noreferrer")
+ if(!opened){
+  window.open(liveStreamUrl,"_blank","noopener,noreferrer")
+ }
+}
+
+function formatRemaining(ms){
+ const totalSeconds = Math.floor(ms/1000)
+ const days = Math.floor(totalSeconds/86400)
+ const hours = Math.floor((totalSeconds%86400)/3600)
+ const minutes = Math.floor((totalSeconds%3600)/60)
+ const seconds = totalSeconds%60
+ if(days>0){
+  return `${days}j ${String(hours).padStart(2,"0")}h ${String(minutes).padStart(2,"0")}m ${String(seconds).padStart(2,"0")}s`
+ }
+ return `${String(hours).padStart(2,"0")}h ${String(minutes).padStart(2,"0")}m ${String(seconds).padStart(2,"0")}s`
+}
 
 useEffect(()=>{
  if(!card) return
  if(!wonTier) return
  if(winnerTierRef.current===wonTier.tier) return
  winnerTierRef.current = wonTier.tier
+ setRaffleOpen(true)
  triggerHaptics([120,60,120,60,180])
 },[wonTier,card])
+
+async function submitRaffleEntry(){
+ if(!wonTier) return
+ if(!raffleFirstName.trim() || !rafflePhone.trim() || !raffleEmail.trim()){
+  setRaffleStatus("Merci de remplir prénom, téléphone et email.")
+  return
+ }
+ setRaffleLoading(true)
+ setRaffleStatus("")
+ try{
+  const response = await fetch("/api/raffle/enter",{
+   method:"POST",
+   headers:{"content-type":"application/json"},
+   body:JSON.stringify({
+    tier:wonTier.tier,
+    firstName:raffleFirstName,
+    phone:rafflePhone,
+    email:raffleEmail,
+    token
+   })
+  })
+  const data = await response.json().catch(()=>({}))
+  if(!response.ok || !data.ok){
+   if(data.error==="not_ulule_eligible"){
+    setRaffleStatus("Email non éligible: contribution avec contrepartie ou don >= 10€ requis.")
+    return
+   }
+   if(data.error==="already_won"){
+    setRaffleStatus("Cet email a déjà gagné.")
+    return
+   }
+   if(data.error==="not_qualified_for_tier"){
+    setRaffleStatus("Ta qualification n'est plus active pour ce palier.")
+    return
+   }
+   setRaffleStatus(`Erreur: ${data.error || "unknown_error"}`)
+   return
+  }
+  setRaffleStatus(data.duplicated ? "Email déjà inscrit pour ce palier." : "Inscription au tirage validée.")
+  setRaffleOpen(false)
+ }finally{
+  setRaffleLoading(false)
+ }
+}
 
 if(!card) return (
 <div className="player-shell">
@@ -166,7 +287,22 @@ return(
  <h1>Bingo Live</h1>
  <p>Campagne en direct</p>
  <p>Palier en cours: {state?.phase?.targetLabel || "1 ligne"}</p>
+ {campaignRemainingMs !== null && (
+  <p className="campaign-countdown">
+   {campaignRemainingMs > 0 ? `Fin de campagne dans: ${formatRemaining(campaignRemainingMs)}` : "Campagne terminée"}
+  </p>
+ )}
  <span className="player-counter">{activeCount}/{card.length} cases actives</span>
+ {liveStreamUrl && (
+  <button className="btn ghost raffle-cta" onClick={openLiveLink}>
+   Rejoindre le live YouTube
+  </button>
+ )}
+ {wonTier && (
+  <button className="btn raffle-cta" onClick={()=>setRaffleOpen(true)}>
+   Participer au tirage au sort
+  </button>
+ )}
 </div>
 
 <div className="player-progress">
@@ -181,6 +317,42 @@ return(
 {wonTier && (
  <div className="winner-banner">
   Tu as gagné le palier: <strong>{wonTier.label}</strong>
+ </div>
+)}
+
+{raffleStatus && <p className="status">{raffleStatus}</p>}
+
+{wonTier && raffleOpen && (
+ <div className="raffle-modal-backdrop">
+  <div className="raffle-modal">
+   <h2>Participer au tirage</h2>
+   <p>Tu es qualifié pour <strong>{wonTier.label}</strong>. Renseigne tes infos de contribution.</p>
+   <input
+    className="input"
+    placeholder="Prénom"
+    value={raffleFirstName}
+    onChange={(e)=>setRaffleFirstName(e.target.value)}
+   />
+   <input
+    className="input"
+    placeholder="Téléphone"
+    value={rafflePhone}
+    onChange={(e)=>setRafflePhone(e.target.value)}
+   />
+   <input
+    className="input"
+    type="email"
+    placeholder="Email utilisé sur Ulule"
+    value={raffleEmail}
+    onChange={(e)=>setRaffleEmail(e.target.value)}
+   />
+   <div className="row">
+    <button className="btn ghost" onClick={()=>setRaffleOpen(false)} disabled={raffleLoading}>Fermer</button>
+    <button className="btn" onClick={submitRaffleEntry} disabled={raffleLoading}>
+     {raffleLoading ? "Vérification..." : "Valider ma participation"}
+    </button>
+   </div>
+  </div>
  </div>
 )}
 

@@ -76,6 +76,12 @@ body.overlay-mode #root {
   color: #94a3b8;
 }
 
+.campaign-countdown {
+  color: #dbeafe !important;
+  font-weight: 600;
+}
+
+
 .player-counter {
   width: fit-content;
   border: 1px solid rgba(148, 163, 184, 0.4);
@@ -85,6 +91,11 @@ body.overlay-mode #root {
   font-size: 0.82rem;
   font-weight: 700;
   padding: 4px 10px;
+}
+
+.raffle-cta {
+  width: fit-content;
+  justify-self: end;
 }
 
 .player-progress {
@@ -126,6 +137,38 @@ body.overlay-mode #root {
   color: #ecfeff;
   padding: 9px 10px;
   font-size: 0.86rem;
+}
+
+.raffle-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.74);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 85;
+  padding: 14px;
+}
+
+.raffle-modal {
+  width: min(520px, 96vw);
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 42, 0.98));
+  box-shadow: 0 24px 52px rgba(2, 6, 23, 0.45);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.raffle-modal h2 {
+  margin: 0;
+  color: #e2e8f0;
+}
+
+.raffle-modal p {
+  margin: 0;
+  color: #94a3b8;
 }
 
 .card-grid {
@@ -915,6 +958,11 @@ body.overlay-mode #root {
   .player-counter {
     font-size: 0.72rem;
     padding: 3px 8px;
+  }
+
+  .raffle-cta {
+    justify-self: stretch;
+    width: 100%;
   }
 
   .player-progress {

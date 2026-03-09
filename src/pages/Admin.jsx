@@ -8,6 +8,8 @@ export default function Admin() {
   const [debug, setDebug] = useState(null)
   const [boardRows, setBoardRows] = useState(4)
   const [boardCols, setBoardCols] = useState(5)
+  const [campaignEndInput, setCampaignEndInput] = useState("")
+  const [liveStreamInput, setLiveStreamInput] = useState("")
   const [events, setEvents] = useState([])
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -101,7 +103,7 @@ export default function Admin() {
     setStatus("")
 
     try {
-      const bootstrapCall = await fetchJson("/api/admin/bootstrap")
+      const bootstrapCall = await fetchJson("/api/backend-bruno/bootstrap")
 
       if (!bootstrapCall.response.ok) {
         if (bootstrapCall.response.status === 403) {
@@ -115,6 +117,9 @@ export default function Admin() {
       }
 
       setDebug(bootstrapCall.data.debug)
+      const campaignEndAt = bootstrapCall.data.debug?.campaign?.endAt
+      setCampaignEndInput(campaignEndAt ? toLocalDateTimeInput(campaignEndAt) : "")
+      setLiveStreamInput(bootstrapCall.data.debug?.liveStream?.url || "")
       setBoardRows(bootstrapCall.data.debug?.rows || 4)
       setBoardCols(bootstrapCall.data.debug?.cols || 5)
       setEvents(bootstrapCall.data.events?.events || [])
@@ -132,17 +137,38 @@ export default function Admin() {
     }
   }
 
+  function toLocalDateTimeInput(iso) {
+    const date = new Date(iso)
+    if (!Number.isFinite(date.getTime())) return ""
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, "0")
+    const day = String(date.getDate()).padStart(2, "0")
+    const hours = String(date.getHours()).padStart(2, "0")
+    const minutes = String(date.getMinutes()).padStart(2, "0")
+    return `${year}-${month}-${day}T${hours}:${minutes}`
+  }
+
   useEffect(() => {
     loadDashboard()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (loading || tierLoading || raffleLoading || rouletteSpinning) return
+      const { response, data } = await fetchJson("/api/backend-bruno/debug")
+      if (!response.ok || !data) return
+      setDebug(data)
+    }, 2500)
+    return () => clearInterval(interval)
+  }, [loading, tierLoading, raffleLoading, rouletteSpinning])
 
   async function toggleEvent(event) {
     setLoading(true)
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson(`/api/admin/events/${event.id}/toggle`, {
+      const { response, data } = await fetchJson(`/api/backend-bruno/events/${event.id}/toggle`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ active: !event.triggered })
@@ -170,13 +196,7 @@ export default function Admin() {
         )
       )
       setDebug((prev) =>
-        prev
-          ? {
-              ...prev,
-              triggered: Math.max(0, prev.triggered + (event.triggered ? -1 : 1)),
-              activationCount: Math.max(0, (prev.activationCount || 0) + (event.triggered ? 0 : 1))
-            }
-          : prev
+        data.debug || prev
       )
       setStatus(event.triggered ? "Événement désactivé" : "Événement activé")
     } finally {
@@ -192,7 +212,7 @@ export default function Admin() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson(`/api/admin/events/${eventId}`, {
+      const { response, data } = await fetchJson(`/api/backend-bruno/events/${eventId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ category })
@@ -224,7 +244,7 @@ export default function Admin() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson("/api/admin/reload", {
+      const { response, data } = await fetchJson("/api/backend-bruno/reload", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}"
@@ -247,7 +267,7 @@ export default function Admin() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson("/api/admin/reset-round", {
+      const { response, data } = await fetchJson("/api/backend-bruno/reset-round", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}"
@@ -270,7 +290,7 @@ export default function Admin() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson("/api/admin/board", {
+      const { response, data } = await fetchJson("/api/backend-bruno/board", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ rows: Number(boardRows), cols: Number(boardCols) })
@@ -288,12 +308,73 @@ export default function Admin() {
     }
   }
 
+  async function saveCampaignEnd() {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const endAt = campaignEndInput ? new Date(campaignEndInput).toISOString() : null
+      const { response, data } = await fetchJson("/api/backend-bruno/campaign-end", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endAt })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur fin campagne: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setDebug((prev) =>
+        prev
+          ? {
+              ...prev,
+              campaign: data.campaign
+            }
+          : prev
+      )
+      setStatus(endAt ? "Fin de campagne enregistrée" : "Fin de campagne supprimée")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function saveLiveStream() {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/live-stream", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: liveStreamInput.trim() || null })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur live: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setDebug((prev) =>
+        prev
+          ? {
+              ...prev,
+              liveStream: data.liveStream
+            }
+          : prev
+      )
+      setStatus(data.liveStream?.url ? "URL du live enregistrée" : "URL du live supprimée")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function chooseTargetTier(tier) {
     setTierLoading(true)
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson("/api/admin/target-tier", {
+      const { response, data } = await fetchJson("/api/backend-bruno/target-tier", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier })
@@ -313,7 +394,7 @@ export default function Admin() {
   }
 
   async function loadRaffle(tier = debug?.targetTier || 1) {
-    const { response, data } = await fetchJson(`/api/admin/raffle?tier=${tier}`)
+    const { response, data } = await fetchJson(`/api/backend-bruno/raffle?tier=${tier}`)
     if (!response.ok || !data.ok) return
     setRaffleEntries(data.entries || [])
     setRaffleWinner(data.winner || null)
@@ -325,7 +406,7 @@ export default function Admin() {
     setRaffleLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/raffle/enter", {
+      const { response, data } = await fetchJson("/api/backend-bruno/raffle/enter", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier: debug?.targetTier || 1, email: raffleEmail.trim() })
@@ -355,7 +436,7 @@ export default function Admin() {
     setRaffleLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/raffle/mock", {
+      const { response, data } = await fetchJson("/api/backend-bruno/raffle/mock", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier: debug?.targetTier || 1, count: 25 })
@@ -401,7 +482,7 @@ export default function Admin() {
     setRaffleLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/raffle/draw", {
+      const { response, data } = await fetchJson("/api/backend-bruno/raffle/draw", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier: debug?.targetTier || 1 })
@@ -424,7 +505,7 @@ export default function Admin() {
   }
 
   async function logout() {
-    await fetch("/api/admin/logout", { method: "POST" }).catch(() => {})
+    await fetch("/api/backend-bruno/logout", { method: "POST" }).catch(() => {})
     navigate("/admin/login", { replace: true })
   }
 
@@ -498,6 +579,29 @@ export default function Admin() {
             />
             <button className="btn ghost" onClick={updateBoardSize} disabled={loading}>
               Appliquer format
+            </button>
+          </div>
+          <div className="row">
+            <input
+              className="input"
+              type="datetime-local"
+              value={campaignEndInput}
+              onChange={(e) => setCampaignEndInput(e.target.value)}
+            />
+            <button className="btn ghost" onClick={saveCampaignEnd} disabled={loading}>
+              Enregistrer fin campagne
+            </button>
+          </div>
+          <div className="row">
+            <input
+              className="input"
+              type="url"
+              placeholder="https://www.youtube.com/watch?v=..."
+              value={liveStreamInput}
+              onChange={(e) => setLiveStreamInput(e.target.value)}
+            />
+            <button className="btn ghost" onClick={saveLiveStream} disabled={loading}>
+              Enregistrer URL live
             </button>
           </div>
           {debug && (

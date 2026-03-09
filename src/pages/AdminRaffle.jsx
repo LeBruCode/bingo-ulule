@@ -32,7 +32,7 @@ export default function AdminRaffle() {
   }
 
   async function loadDebug() {
-    const { response, data } = await fetchJson("/api/admin/debug")
+    const { response, data } = await fetchJson("/api/backend-bruno/debug")
     if (!response.ok) {
       if (response.status === 403) {
         navigate("/admin/login", { replace: true })
@@ -45,13 +45,13 @@ export default function AdminRaffle() {
   }
 
   async function loadUluleStatus() {
-    const { response, data } = await fetchJson("/api/admin/ulule/status")
+    const { response, data } = await fetchJson("/api/backend-bruno/ulule/status")
     if (!response.ok || !data.ok) return
     setUlule(data.ulule || null)
   }
 
   async function loadRaffle(nextTier) {
-    const { response, data } = await fetchJson(`/api/admin/raffle?tier=${nextTier}`)
+    const { response, data } = await fetchJson(`/api/backend-bruno/raffle?tier=${nextTier}`)
     if (!response.ok || !data.ok) return
     setEntries(data.entries || [])
     setWinner(data.winner || null)
@@ -77,11 +77,23 @@ export default function AdminRaffle() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (loading || spinning) return
+      const nextDebug = await loadDebug()
+      if (!nextDebug) return
+      const nextTier = Number(nextDebug?.targetTier || tier)
+      if (nextTier !== tier) setTier(nextTier)
+      await loadRaffle(nextTier)
+    }, 2500)
+    return () => clearInterval(interval)
+  }, [loading, spinning, tier])
+
   async function changeTier(nextTier) {
     setLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/target-tier", {
+      const { response, data } = await fetchJson("/api/backend-bruno/target-tier", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier: nextTier })
@@ -103,7 +115,7 @@ export default function AdminRaffle() {
     setLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/raffle/mock", {
+      const { response, data } = await fetchJson("/api/backend-bruno/raffle/mock", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier, count: 80 })
@@ -125,7 +137,7 @@ export default function AdminRaffle() {
     setLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/raffle/enter", {
+      const { response, data } = await fetchJson("/api/backend-bruno/raffle/enter", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier, email: email.trim() })
@@ -176,7 +188,7 @@ export default function AdminRaffle() {
     setLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/raffle/draw", {
+      const { response, data } = await fetchJson("/api/backend-bruno/raffle/draw", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier })
@@ -201,7 +213,7 @@ export default function AdminRaffle() {
     setLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/ulule/sync-now", {
+      const { response, data } = await fetchJson("/api/backend-bruno/ulule/sync-now", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}"
@@ -221,7 +233,7 @@ export default function AdminRaffle() {
     setLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/admin/ulule/live-mode", {
+      const { response, data } = await fetchJson("/api/backend-bruno/ulule/live-mode", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled })
@@ -289,7 +301,7 @@ export default function AdminRaffle() {
                 key={`${item.entry.id}-${item.index}`}
                 className={`raffle-slot-item ${item.isCenter ? "center" : ""} ${winner?.id === item.entry.id ? "winner" : ""}`}
               >
-                {item.entry.email}
+                {item.entry.firstName ? `${item.entry.firstName} — ${item.entry.email}` : item.entry.email}
               </div>
             ))
           )}
