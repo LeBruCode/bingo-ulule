@@ -14,16 +14,6 @@ export default function Admin() {
   const [tierLoading, setTierLoading] = useState(false)
   const [status, setStatus] = useState("")
 
-  const adminKey = localStorage.getItem("bingoAdminKey") || ""
-
-  const authHeaders = useMemo(
-    () => ({
-      "x-admin-key": adminKey,
-      "content-type": "application/json"
-    }),
-    [adminKey]
-  )
-
   const categories = useMemo(() => {
     const fromEvents = events.map((event) => event.category)
     const fromStorage = JSON.parse(localStorage.getItem("bingoCategories") || "[]")
@@ -105,9 +95,13 @@ export default function Admin() {
     setStatus("")
 
     try {
-      const bootstrapCall = await fetchJson("/api/admin/bootstrap", { headers: authHeaders })
+      const bootstrapCall = await fetchJson("/api/admin/bootstrap")
 
       if (!bootstrapCall.response.ok) {
+        if (bootstrapCall.response.status === 403) {
+          navigate("/admin/login", { replace: true })
+          return
+        }
         setDebug(null)
         setEvents([])
         setStatus("Session invalide: reconnecte-toi")
@@ -132,10 +126,6 @@ export default function Admin() {
   }
 
   useEffect(() => {
-    if (!adminKey) {
-      navigate("/admin/login", { replace: true })
-      return
-    }
     loadDashboard()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -147,7 +137,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson(`/api/admin/events/${event.id}/toggle`, {
         method: "POST",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ active: !event.triggered })
       })
 
@@ -197,7 +187,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson(`/api/admin/events/${eventId}`, {
         method: "PATCH",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ category })
       })
 
@@ -229,7 +219,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/reload", {
         method: "POST",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: "{}"
       })
 
@@ -252,7 +242,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/reset-round", {
         method: "POST",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: "{}"
       })
 
@@ -275,7 +265,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/board", {
         method: "PATCH",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ rows: Number(boardRows), cols: Number(boardCols) })
       })
 
@@ -298,7 +288,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/target-tier", {
         method: "POST",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ tier })
       })
 
@@ -314,8 +304,8 @@ export default function Admin() {
     }
   }
 
-  function logout() {
-    localStorage.removeItem("bingoAdminKey")
+  async function logout() {
+    await fetch("/api/admin/logout", { method: "POST" }).catch(() => {})
     navigate("/admin/login", { replace: true })
   }
 
@@ -338,7 +328,7 @@ export default function Admin() {
         </div>
       </div>
 
-      <div className="admin-grid">
+      <div className="admin-grid full-width">
         <section className="panel">
           <h2>Manche</h2>
           <div className="row">

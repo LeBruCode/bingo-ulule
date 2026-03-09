@@ -265,6 +265,10 @@ body.overlay-mode #root {
   margin-bottom: 14px;
 }
 
+.admin-grid.full-width {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .panel {
   background: linear-gradient(180deg, rgba(31, 41, 55, 0.88), rgba(17, 24, 39, 0.88));
   border: 1px solid rgba(148, 163, 184, 0.28);

@@ -6,6 +6,7 @@ import fastifyStatic from "@fastify/static"
 import path from "path"
 import { fileURLToPath } from "url"
 import { v4 as uuidv4 } from "uuid"
+import crypto from "crypto"
 
 dotenv.config()
 
@@ -60,6 +61,9 @@ let isBootstrapped = false
 let bootstrapError = null
 let bootstrapPromise = null
 const MAX_ACTIVATION_LOG = Number(process.env.MAX_ACTIVATION_LOG || 5000)
+const ADMIN_SESSION_COOKIE = "bingo_admin_session"
+const ADMIN_SESSION_TTL_SECONDS = Number(process.env.ADMIN_SESSION_TTL_SECONDS || 60 * 60 * 12)
+const adminSessions = new Map()
 let progressStatsCache = null
 let progressStatsDirty = true
 
@@ -86,9 +90,75 @@ function serializeBoardConfig() {
 }
 
 function isAdmin(req) {
-  const adminKey = process.env.ADMIN_KEY
-  const providedKey = req.headers["x-admin-key"]
-  return Boolean(adminKey) && providedKey === adminKey
+  return hasValidAdminSession(req)
+}
+
+function parseCookies(cookieHeader) {
+  if (!cookieHeader) return {}
+  const out = {}
+  for (const rawPart of cookieHeader.split(";")) {
+    const part = rawPart.trim()
+    if (!part) continue
+    const eqIndex = part.indexOf("=")
+    if (eqIndex <= 0) continue
+    const key = part.slice(0, eqIndex).trim()
+    const value = part.slice(eqIndex + 1).trim()
+    out[key] = decodeURIComponent(value)
+  }
+  return out
+}
+
+function getAdminSessionToken(req) {
+  const cookies = parseCookies(req.headers.cookie)
+  return cookies[ADMIN_SESSION_COOKIE] || ""
+}
+
+function cleanupExpiredAdminSessions() {
+  const now = Date.now()
+  for (const [token, expiresAt] of adminSessions.entries()) {
+    if (expiresAt <= now) adminSessions.delete(token)
+  }
+}
+
+function hasValidAdminSession(req) {
+  cleanupExpiredAdminSessions()
+  const token = getAdminSessionToken(req)
+  if (!token) return false
+  const expiresAt = adminSessions.get(token)
+  if (!expiresAt || expiresAt <= Date.now()) {
+    adminSessions.delete(token)
+    return false
+  }
+  return true
+}
+
+function createAdminSessionToken() {
+  const token = crypto.randomBytes(32).toString("hex")
+  const expiresAt = Date.now() + ADMIN_SESSION_TTL_SECONDS * 1000
+  adminSessions.set(token, expiresAt)
+  return token
+}
+
+function clearAdminSession(req) {
+  const token = getAdminSessionToken(req)
+  if (token) adminSessions.delete(token)
+}
+
+function shouldUseSecureCookie(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").toLowerCase()
+  if (forwardedProto.includes("https")) return true
+  const host = String(req.headers.host || "")
+  return !host.startsWith("localhost") && !host.startsWith("127.0.0.1")
+}
+
+function buildAdminCookie(token, req) {
+  const secureFlag = shouldUseSecureCookie(req) ? "; Secure" : ""
+  return `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(token)}; Max-Age=${ADMIN_SESSION_TTL_SECONDS}; Path=/; HttpOnly; SameSite=Lax${secureFlag}`
+}
+
+function buildAdminCookieClear(req) {
+  const secureFlag = shouldUseSecureCookie(req) ? "; Secure" : ""
+  return `${ADMIN_SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secureFlag}`
 }
 
 function normalizeCategory(value) {
@@ -108,6 +178,25 @@ async function requireAdmin(req, reply) {
     return reply
   }
 }
+
+fastify.post("/api/admin/login", async (req, reply) => {
+  const adminKey = process.env.ADMIN_KEY
+  const provided = typeof req.body?.adminKey === "string" ? req.body.adminKey.trim() : ""
+  if (!adminKey || provided !== adminKey) {
+    reply.code(403)
+    return { ok: false, error: "forbidden" }
+  }
+
+  const token = createAdminSessionToken()
+  reply.header("set-cookie", buildAdminCookie(token, req))
+  return { ok: true }
+})
+
+fastify.post("/api/admin/logout", async (req, reply) => {
+  clearAdminSession(req)
+  reply.header("set-cookie", buildAdminCookieClear(req))
+  return { ok: true }
+})
 
 function serializeWinners() {
   const byLine = {}

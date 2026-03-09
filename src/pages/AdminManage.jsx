@@ -17,16 +17,6 @@ export default function AdminManage() {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
 
-  const adminKey = localStorage.getItem("bingoAdminKey") || ""
-
-  const authHeaders = useMemo(
-    () => ({
-      "x-admin-key": adminKey,
-      "content-type": "application/json"
-    }),
-    [adminKey]
-  )
-
   const categories = useMemo(() => {
     const fromEvents = events.map((event) => event.category)
     const fromStorage = JSON.parse(localStorage.getItem("bingoCategories") || "[]")
@@ -46,10 +36,14 @@ export default function AdminManage() {
 
     try {
       const { response, data } = await fetchJson("/api/admin/events", {
-        headers: authHeaders
+        headers: undefined
       })
 
       if (!response.ok) {
+        if (response.status === 403) {
+          navigate("/admin/login", { replace: true })
+          return
+        }
         setEvents([])
         setStatus("Session invalide")
         return
@@ -65,10 +59,6 @@ export default function AdminManage() {
   }
 
   useEffect(() => {
-    if (!adminKey) {
-      navigate("/admin/login", { replace: true })
-      return
-    }
     loadEvents()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -105,7 +95,7 @@ export default function AdminManage() {
     try {
       const { response, data } = await fetchJson("/api/admin/events", {
         method: "POST",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: newEventName,
           category: newEventCategory,
@@ -136,7 +126,7 @@ export default function AdminManage() {
     try {
       const { response, data } = await fetchJson(`/api/admin/events/${id}`, {
         method: "PATCH",
-        headers: authHeaders,
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: editingName,
           category: editingCategory,

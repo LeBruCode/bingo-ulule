@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 
 export default function AdminLogin() {
   const navigate = useNavigate()
-  const [adminKey, setAdminKey] = useState(localStorage.getItem("bingoAdminKey") || "")
+  const [adminKey, setAdminKey] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
@@ -14,8 +14,10 @@ export default function AdminLogin() {
     setError("")
 
     try {
-      const response = await fetch("/api/admin/debug", {
-        headers: { "x-admin-key": adminKey.trim() }
+      const response = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ adminKey: adminKey.trim() })
       })
 
       if (!response.ok) {
@@ -23,7 +25,6 @@ export default function AdminLogin() {
         return
       }
 
-      localStorage.setItem("bingoAdminKey", adminKey.trim())
       navigate("/admin", { replace: true })
     } catch {
       setError("Erreur reseau")
