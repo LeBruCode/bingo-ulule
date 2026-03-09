@@ -29,14 +29,6 @@ const ROWS = 4
 const COLS = 5
 const SIZE = ROWS * COLS
 const MAX_CARDS = Number(process.env.MAX_CARDS || 5000)
-const ALLOWED_CATEGORIES = new Set([
-  "coulisses",
-  "creative",
-  "chat",
-  "public",
-  "dons",
-  "general"
-])
 
 let events = []
 let eventNames = []
@@ -62,9 +54,13 @@ function isAdmin(req) {
 
 function normalizeCategory(value) {
   if (typeof value !== "string") return "general"
-  const normalized = value.trim().toLowerCase()
-  if (!ALLOWED_CATEGORIES.has(normalized)) return "general"
-  return normalized
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-_]/g, "")
+    .slice(0, 40)
+  return normalized || "general"
 }
 
 async function requireAdmin(req, reply) {
@@ -191,6 +187,34 @@ function checkCard(cardIndex) {
     if (lines >= 3) winners.three.add(token)
     if (lines >= 4) winners.full.add(token)
   }
+}
+
+function recomputeWinners() {
+  winners = {
+    one: new Set(),
+    two: new Set(),
+    three: new Set(),
+    full: new Set()
+  }
+
+  for (const cardIndex of playersByCard.keys()) {
+    checkCard(cardIndex)
+  }
+}
+
+function setEventTriggered(eventName, active) {
+  if (active) {
+    if (triggeredSet.has(eventName)) return false
+    triggeredSet.add(eventName)
+    triggered.push(eventName)
+    return true
+  }
+
+  if (!triggeredSet.has(eventName)) return false
+  triggeredSet.delete(eventName)
+  triggered = triggered.filter((name) => name !== eventName)
+  recomputeWinners()
+  return true
 }
 
 function attachPlayerToCard(token, cardIndex) {
@@ -435,12 +459,10 @@ async function handleTrigger(req, reply) {
     return { ok: false, error: "unknown_event" }
   }
 
-  if (triggeredSet.has(normalizedEvent)) {
+  const changed = setEventTriggered(normalizedEvent, true)
+  if (!changed) {
     return { ok: true, duplicated: true }
   }
-
-  triggered.push(normalizedEvent)
-  triggeredSet.add(normalizedEvent)
 
   const affectedCards = eventIndex.get(normalizedEvent) || []
   for (const cardIndex of affectedCards) {
@@ -452,6 +474,40 @@ async function handleTrigger(req, reply) {
 }
 
 fastify.post("/api/admin/trigger", { preHandler: requireAdmin }, handleTrigger)
+
+fastify.post("/api/admin/events/:id/toggle", { preHandler: requireAdmin }, async (req, reply) => {
+  const id = Number(req.params?.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    reply.code(400)
+    return { ok: false, error: "invalid_id" }
+  }
+
+  if (typeof req.body?.active !== "boolean") {
+    reply.code(400)
+    return { ok: false, error: "invalid_active" }
+  }
+
+  const eventRow = events.find((event) => event.id === id)
+  if (!eventRow) {
+    reply.code(404)
+    return { ok: false, error: "not_found" }
+  }
+
+  const changed = setEventTriggered(eventRow.name, req.body.active)
+  if (!changed) {
+    return { ok: true, unchanged: true }
+  }
+
+  if (req.body.active) {
+    const affectedCards = eventIndex.get(eventRow.name) || []
+    for (const cardIndex of affectedCards) {
+      checkCard(cardIndex)
+    }
+  }
+
+  io.emit("state", serializeState())
+  return { ok: true, state: serializeState() }
+})
 
 // Backward compatibility for existing frontend.
 fastify.get("/api/debug", { preHandler: requireAdmin }, async () => getDebugState())
