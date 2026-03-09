@@ -11,6 +11,7 @@ export default function Admin() {
   const [events, setEvents] = useState([])
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [tierLoading, setTierLoading] = useState(false)
   const [status, setStatus] = useState("")
 
   const adminKey = localStorage.getItem("bingoAdminKey") || ""
@@ -275,7 +276,7 @@ export default function Admin() {
   }
 
   async function chooseTargetTier(tier) {
-    setLoading(true)
+    setTierLoading(true)
     setStatus("")
 
     try {
@@ -293,7 +294,7 @@ export default function Admin() {
       setDebug(data.debug || null)
       setStatus(`Palier en cours: ${data.debug?.targetLabel || `${tier} ligne(s)`}`)
     } finally {
-      setLoading(false)
+      setTierLoading(false)
     }
   }
 
@@ -339,7 +340,7 @@ export default function Admin() {
                 key={tierItem.tier}
                 className={`btn ghost ${debug?.targetTier === tierItem.tier ? "active" : ""}`}
                 onClick={() => chooseTargetTier(tierItem.tier)}
-                disabled={loading}
+                disabled={tierLoading}
               >
                 {tierItem.label}
               </button>
