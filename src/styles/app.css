@@ -1,0 +1,6 @@
+
+body{font-family:Inter,system-ui;background:#f7f8fb;margin:0}
+.container{max-width:900px;margin:auto;padding:40px}
+.card-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.cell{padding:18px;border-radius:10px;background:white;border:1px solid #e5e7eb;transition:.25s}
+.cell.active{background:#22c55e;color:white;transform:scale(1.05)}
