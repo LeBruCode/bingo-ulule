@@ -109,22 +109,12 @@ useEffect(()=>{
  previousTriggeredRef.current = currentTriggered
 },[card,state])
 
-if(!card) return (
-<div className="player-shell">
- <div className="player-stage">
-  <div className="player-head">
-   <h1>Bingo Live</h1>
-   <p>{socketError || "Chargement de la carte..."}</p>
-  </div>
- </div>
-</div>
-)
-
-const activeCount = card.filter((eventName)=>state?.triggered.includes(eventName)).length
 const boardCols = state?.board?.cols || 5
 const boardRows = state?.board?.rows || 4
+const safeCard = Array.isArray(card) ? card : []
+const activeCount = safeCard.filter((eventName)=>state?.triggered.includes(eventName)).length
 const lineGroups = Array.from({length:boardRows},(_,rowIndex)=>
- card.slice(rowIndex*boardCols,(rowIndex+1)*boardCols)
+ safeCard.slice(rowIndex*boardCols,(rowIndex+1)*boardCols)
 )
 const rowMissingCounts = lineGroups.map((line)=>
  line.reduce((missing,eventName)=>missing+(state?.triggered.includes(eventName)?0:1),0)
@@ -150,11 +140,23 @@ function winnerTokensForTier(tier){
 const wonTier = tierProgress.find(({tier})=>winnerTokensForTier(tier).includes(token))
 
 useEffect(()=>{
+ if(!card) return
  if(!wonTier) return
  if(winnerTierRef.current===wonTier.tier) return
  winnerTierRef.current = wonTier.tier
  triggerHaptics([120,60,120,60,180])
-},[wonTier])
+},[wonTier,card])
+
+if(!card) return (
+<div className="player-shell">
+ <div className="player-stage">
+  <div className="player-head">
+   <h1>Bingo Live</h1>
+   <p>{socketError || "Chargement de la carte..."}</p>
+  </div>
+ </div>
+</div>
+)
 
 return(
 <div className="player-shell">
