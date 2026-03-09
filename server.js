@@ -25,9 +25,14 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const ROWS = 4
-const COLS = 5
-const SIZE = ROWS * COLS
+function parseBoardNumber(input, fallback) {
+  const value = Number(input)
+  if (!Number.isInteger(value) || value < 2 || value > 8) return fallback
+  return value
+}
+
+let ROWS = parseBoardNumber(process.env.BINGO_ROWS, 4)
+let COLS = parseBoardNumber(process.env.BINGO_COLS, 5)
 const MAX_CARDS = Number(process.env.MAX_CARDS || 5000)
 
 let events = []
@@ -45,6 +50,19 @@ let winners = {
   full: new Set()
 }
 let gameVersion = 1
+
+function boardSize() {
+  return ROWS * COLS
+}
+
+function serializeBoardConfig() {
+  return {
+    rows: ROWS,
+    cols: COLS,
+    size: boardSize(),
+    maxCards: MAX_CARDS
+  }
+}
 
 function isAdmin(req) {
   const adminKey = process.env.ADMIN_KEY
@@ -82,6 +100,7 @@ function serializeWinners() {
 function serializeState() {
   return {
     gameVersion,
+    board: serializeBoardConfig(),
     triggered,
     winners: serializeWinners()
   }
@@ -130,16 +149,16 @@ function generateCards() {
   cards = []
   eventIndex = new Map()
 
-  if (eventNames.length < SIZE) {
+  if (eventNames.length < boardSize()) {
     fastify.log.warn(
-      { events: eventNames.length, required: SIZE },
+      { events: eventNames.length, required: boardSize() },
       "Not enough events to generate bingo cards"
     )
     return
   }
 
   for (let i = 0; i < MAX_CARDS; i++) {
-    const card = pickUniqueEvents(eventNames, SIZE)
+    const card = pickUniqueEvents(eventNames, boardSize())
     cards.push(card)
 
     for (const eventName of card) {
@@ -185,7 +204,7 @@ function checkCard(cardIndex) {
     if (lines >= 1) winners.one.add(token)
     if (lines >= 2) winners.two.add(token)
     if (lines >= 3) winners.three.add(token)
-    if (lines >= 4) winners.full.add(token)
+    if (lines >= ROWS) winners.full.add(token)
   }
 }
 
@@ -262,6 +281,7 @@ async function loadEvents() {
 io.on("connection", (socket) => {
   let token = socket.handshake.auth?.token
   if (!token) token = uuidv4()
+  socket.data.token = token
 
   if (cards.length === 0) {
     socket.emit("error", "no_cards_generated")
@@ -275,9 +295,20 @@ io.on("connection", (socket) => {
   socket.emit("state", serializeState())
 })
 
+function refreshConnectedPlayers() {
+  for (const socket of io.sockets.sockets.values()) {
+    const token = socket.data?.token
+    if (!token) continue
+    const player = ensurePlayer(token)
+    socket.emit("card", cards[player.cardIndex])
+    socket.emit("state", serializeState())
+  }
+}
+
 fastify.get("/api/health", async () => {
   return {
     status: "ok",
+    board: serializeBoardConfig(),
     players: players.size,
     cards: cards.length,
     events: eventNames.length
@@ -287,9 +318,7 @@ fastify.get("/api/health", async () => {
 function getDebugState() {
   return {
     gameVersion,
-    rows: ROWS,
-    cols: COLS,
-    maxCards: MAX_CARDS,
+    ...serializeBoardConfig(),
     events: eventNames.length,
     cards: cards.length,
     players: players.size,
@@ -335,10 +364,40 @@ fastify.post("/api/admin/reload", { preHandler: requireAdmin }, async () => {
       error: "reload_failed"
     }
   }
+  refreshConnectedPlayers()
   return {
     ok: true,
     debug: getDebugState()
   }
+})
+
+fastify.patch("/api/admin/board", { preHandler: requireAdmin }, async (req, reply) => {
+  const nextRows = Number(req.body?.rows)
+  const nextCols = Number(req.body?.cols)
+
+  if (
+    !Number.isInteger(nextRows) ||
+    !Number.isInteger(nextCols) ||
+    nextRows < 2 ||
+    nextCols < 2 ||
+    nextRows > 8 ||
+    nextCols > 8
+  ) {
+    reply.code(400)
+    return { ok: false, error: "invalid_board_size" }
+  }
+
+  if (eventNames.length < nextRows * nextCols) {
+    reply.code(400)
+    return { ok: false, error: "not_enough_events", required: nextRows * nextCols, available: eventNames.length }
+  }
+
+  ROWS = nextRows
+  COLS = nextCols
+  generateCards()
+  refreshConnectedPlayers()
+
+  return { ok: true, board: serializeBoardConfig(), gameVersion }
 })
 
 fastify.post("/api/admin/reset-round", { preHandler: requireAdmin }, async () => {
@@ -381,7 +440,7 @@ fastify.post("/api/admin/events", { preHandler: requireAdmin }, async (req, repl
     return { ok: false, error: "reload_failed" }
   }
 
-  io.emit("state", serializeState())
+  refreshConnectedPlayers()
   return { ok: true, gameReset: true }
 })
 
@@ -441,7 +500,7 @@ fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req,
     return { ok: false, error: "reload_failed" }
   }
 
-  io.emit("state", serializeState())
+  refreshConnectedPlayers()
   return { ok: true, gameReset: true }
 })
 

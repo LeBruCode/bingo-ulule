@@ -87,6 +87,7 @@ if(!card) return (
 )
 
 const activeCount = card.filter((eventName)=>state?.triggered.includes(eventName)).length
+const boardCols = state?.board?.cols || 5
 
 return(
 <div className="player-shell">
@@ -98,7 +99,7 @@ return(
  <span className="player-counter">{activeCount}/{card.length} cases actives</span>
 </div>
 
-<div className="card-grid player-grid">
+<div className="card-grid player-grid" style={{gridTemplateColumns:`repeat(${boardCols}, minmax(0, 1fr))`}}>
 
 {card.map((c,i)=>{
 

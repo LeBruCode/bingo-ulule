@@ -6,6 +6,8 @@ const DEFAULT_CATEGORIES = ["coulisses", "creative", "chat", "public", "dons", "
 export default function Admin() {
   const navigate = useNavigate()
   const [debug, setDebug] = useState(null)
+  const [boardRows, setBoardRows] = useState(4)
+  const [boardCols, setBoardCols] = useState(5)
   const [events, setEvents] = useState([])
   const [newCategoryName, setNewCategoryName] = useState("")
   const [draggedEventId, setDraggedEventId] = useState(null)
@@ -69,6 +71,8 @@ export default function Admin() {
       }
 
       setDebug(debugCall.data)
+      setBoardRows(debugCall.data.rows || 4)
+      setBoardCols(debugCall.data.cols || 5)
       setEvents(eventsCall.data.events || [])
       setStatus("Dashboard charge")
     } finally {
@@ -218,6 +222,29 @@ export default function Admin() {
     }
   }
 
+  async function updateBoardSize() {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const { response, data } = await fetchJson("/api/admin/board", {
+        method: "PATCH",
+        headers: authHeaders,
+        body: JSON.stringify({ rows: Number(boardRows), cols: Number(boardCols) })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur format: ${data.details || data.error || "unknown_error"}`)
+        return
+      }
+
+      setStatus(`Format applique: ${data.board.rows}x${data.board.cols}`)
+      await loadDashboard()
+    } finally {
+      setLoading(false)
+    }
+  }
+
   function logout() {
     localStorage.removeItem("bingoAdminKey")
     navigate("/admin/login", { replace: true })
@@ -254,11 +281,33 @@ export default function Admin() {
               Reset round
             </button>
           </div>
+          <div className="row">
+            <input
+              className="input"
+              type="number"
+              min="2"
+              max="8"
+              value={boardRows}
+              onChange={(e) => setBoardRows(e.target.value)}
+            />
+            <input
+              className="input"
+              type="number"
+              min="2"
+              max="8"
+              value={boardCols}
+              onChange={(e) => setBoardCols(e.target.value)}
+            />
+            <button className="btn ghost" onClick={updateBoardSize} disabled={loading}>
+              Appliquer format
+            </button>
+          </div>
           {debug && (
             <div className="kpis">
               <div><strong>{debug.events}</strong><span>events</span></div>
               <div><strong>{debug.players}</strong><span>players</span></div>
               <div><strong>{debug.triggered}</strong><span>triggered</span></div>
+              <div><strong>{debug.rows}x{debug.cols}</strong><span>grille</span></div>
               <div><strong>{debug.gameVersion}</strong><span>game ver</span></div>
             </div>
           )}
