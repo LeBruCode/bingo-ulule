@@ -31,6 +31,7 @@ const SIZE = ROWS * COLS
 const MAX_CARDS = Number(process.env.MAX_CARDS || 5000)
 
 let events = []
+let eventNames = []
 let cards = []
 let eventIndex = new Map()
 let players = new Map()
@@ -43,11 +44,19 @@ let winners = {
   three: new Set(),
   full: new Set()
 }
+let gameVersion = 1
 
 function isAdmin(req) {
   const adminKey = process.env.ADMIN_KEY
   const providedKey = req.headers["x-admin-key"]
   return Boolean(adminKey) && providedKey === adminKey
+}
+
+async function requireAdmin(req, reply) {
+  if (!isAdmin(req)) {
+    reply.code(403).send({ error: "forbidden" })
+    return reply
+  }
 }
 
 function serializeWinners() {
@@ -61,6 +70,7 @@ function serializeWinners() {
 
 function serializeState() {
   return {
+    gameVersion,
     triggered,
     winners: serializeWinners()
   }
@@ -91,22 +101,34 @@ function resetGameState() {
     three: new Set(),
     full: new Set()
   }
+  gameVersion += 1
+}
+
+function clearRoundProgress() {
+  triggered = []
+  triggeredSet = new Set()
+  winners = {
+    one: new Set(),
+    two: new Set(),
+    three: new Set(),
+    full: new Set()
+  }
 }
 
 function generateCards() {
   cards = []
   eventIndex = new Map()
 
-  if (events.length < SIZE) {
+  if (eventNames.length < SIZE) {
     fastify.log.warn(
-      { events: events.length, required: SIZE },
+      { events: eventNames.length, required: SIZE },
       "Not enough events to generate bingo cards"
     )
     return
   }
 
   for (let i = 0; i < MAX_CARDS; i++) {
-    const card = pickUniqueEvents(events, SIZE)
+    const card = pickUniqueEvents(eventNames, SIZE)
     cards.push(card)
 
     for (const eventName of card) {
@@ -178,14 +200,23 @@ async function loadEvents() {
 
   if (error) {
     fastify.log.error({ error }, "Error loading events")
-    return
+    return false
   }
 
-  events = data.map((e) => e.name).filter(Boolean)
-  fastify.log.info({ events: events.length }, "Events loaded")
+  events = data
+    .map((e) => ({
+      id: e.id,
+      name: typeof e.name === "string" ? e.name.trim() : "",
+      created_at: e.created_at
+    }))
+    .filter((e) => e.name)
+
+  eventNames = events.map((e) => e.name)
+  fastify.log.info({ events: eventNames.length }, "Events loaded")
 
   generateCards()
   fastify.log.info({ cards: cards.length }, "Cards generated")
+  return true
 }
 
 io.on("connection", (socket) => {
@@ -209,18 +240,17 @@ fastify.get("/api/health", async () => {
     status: "ok",
     players: players.size,
     cards: cards.length,
-    events: events.length
+    events: eventNames.length
   }
 })
 
-fastify.get("/api/debug", async (req, reply) => {
-  if (!isAdmin(req)) {
-    reply.code(403)
-    return { error: "forbidden" }
-  }
-
+function getDebugState() {
   return {
-    events: events.length,
+    gameVersion,
+    rows: ROWS,
+    cols: COLS,
+    maxCards: MAX_CARDS,
+    events: eventNames.length,
     cards: cards.length,
     players: players.size,
     triggered: triggered.length,
@@ -231,13 +261,132 @@ fastify.get("/api/debug", async (req, reply) => {
       full: winners.full.size
     }
   }
+}
+
+fastify.get("/api/admin/debug", { preHandler: requireAdmin }, async () => {
+  return getDebugState()
 })
 
-fastify.post("/api/trigger", async (req, reply) => {
-  if (!isAdmin(req)) {
-    reply.code(403)
-    return { ok: false, error: "forbidden" }
+fastify.get("/api/admin/events", { preHandler: requireAdmin }, async () => {
+  return {
+    total: events.length,
+    triggered: triggered.length,
+    events: events.map((row) => ({
+      id: row.id,
+      name: row.name,
+      created_at: row.created_at,
+      triggered: triggeredSet.has(row.name)
+    }))
   }
+})
+
+fastify.post("/api/admin/reload", { preHandler: requireAdmin }, async () => {
+  const ok = await loadEvents()
+  if (!ok) {
+    return {
+      ok: false,
+      error: "reload_failed"
+    }
+  }
+  return {
+    ok: true,
+    debug: getDebugState()
+  }
+})
+
+fastify.post("/api/admin/reset-round", { preHandler: requireAdmin }, async () => {
+  clearRoundProgress()
+  io.emit("state", serializeState())
+  return { ok: true }
+})
+
+fastify.post("/api/admin/events", { preHandler: requireAdmin }, async (req, reply) => {
+  const name = req.body?.name
+  if (typeof name !== "string") {
+    reply.code(400)
+    return { ok: false, error: "invalid_name" }
+  }
+
+  const normalizedName = name.trim()
+  if (!normalizedName || normalizedName.length > 120) {
+    reply.code(400)
+    return { ok: false, error: "invalid_name" }
+  }
+
+  if (events.some((e) => e.name.toLowerCase() === normalizedName.toLowerCase())) {
+    reply.code(409)
+    return { ok: false, error: "duplicate_name" }
+  }
+
+  const { error } = await supabase.from("events").insert([{ name: normalizedName }])
+  if (error) {
+    fastify.log.error({ error }, "Error creating event")
+    reply.code(500)
+    return { ok: false, error: "create_failed" }
+  }
+
+  const ok = await loadEvents()
+  if (!ok) {
+    reply.code(500)
+    return { ok: false, error: "reload_failed" }
+  }
+
+  io.emit("state", serializeState())
+  return { ok: true, gameReset: true }
+})
+
+fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req, reply) => {
+  const id = Number(req.params?.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    reply.code(400)
+    return { ok: false, error: "invalid_id" }
+  }
+
+  const name = req.body?.name
+  if (typeof name !== "string") {
+    reply.code(400)
+    return { ok: false, error: "invalid_name" }
+  }
+
+  const normalizedName = name.trim()
+  if (!normalizedName || normalizedName.length > 120) {
+    reply.code(400)
+    return { ok: false, error: "invalid_name" }
+  }
+
+  if (events.some((e) => e.id !== id && e.name.toLowerCase() === normalizedName.toLowerCase())) {
+    reply.code(409)
+    return { ok: false, error: "duplicate_name" }
+  }
+
+  const { data, error } = await supabase
+    .from("events")
+    .update({ name: normalizedName })
+    .eq("id", id)
+    .select("id")
+
+  if (error) {
+    fastify.log.error({ error }, "Error updating event")
+    reply.code(500)
+    return { ok: false, error: "update_failed" }
+  }
+
+  if (!data || data.length === 0) {
+    reply.code(404)
+    return { ok: false, error: "not_found" }
+  }
+
+  const ok = await loadEvents()
+  if (!ok) {
+    reply.code(500)
+    return { ok: false, error: "reload_failed" }
+  }
+
+  io.emit("state", serializeState())
+  return { ok: true, gameReset: true }
+})
+
+async function handleTrigger(req, reply) {
 
   const event = req.body?.event
   if (typeof event !== "string") {
@@ -265,7 +414,13 @@ fastify.post("/api/trigger", async (req, reply) => {
 
   io.emit("state", serializeState())
   return { ok: true }
-})
+}
+
+fastify.post("/api/admin/trigger", { preHandler: requireAdmin }, handleTrigger)
+
+// Backward compatibility for existing frontend.
+fastify.get("/api/debug", { preHandler: requireAdmin }, async () => getDebugState())
+fastify.post("/api/trigger", { preHandler: requireAdmin }, handleTrigger)
 
 fastify.register(fastifyStatic, {
   root: path.join(__dirname, "dist"),

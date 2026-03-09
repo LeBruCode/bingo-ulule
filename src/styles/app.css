@@ -1,6 +1,238 @@
+:root {
+  --bg: #f3f6f9;
+  --panel: #ffffff;
+  --text: #0f172a;
+  --muted: #5b6473;
+  --line: #d6dce5;
+  --accent: #0ea5e9;
+  --accent-strong: #0284c7;
+  --danger: #dc2626;
+  --shadow: 0 12px 35px rgba(15, 23, 42, 0.09);
+}
 
-body{font-family:Inter,system-ui;background:#f7f8fb;margin:0}
-.container{max-width:900px;margin:auto;padding:40px}
-.card-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
-.cell{padding:18px;border-radius:10px;background:white;border:1px solid #e5e7eb;transition:.25s}
-.cell.active{background:#22c55e;color:white;transform:scale(1.05)}
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 5% 10%, #dbeafe 0%, transparent 30%),
+    radial-gradient(circle at 90% 5%, #cffafe 0%, transparent 25%),
+    var(--bg);
+}
+
+.container {
+  max-width: 900px;
+  margin: auto;
+  padding: 40px 20px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+
+.cell {
+  padding: 18px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #dbe1ea;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  transition: 0.2s ease;
+}
+
+.cell.active {
+  background: linear-gradient(140deg, #16a34a, #22c55e);
+  color: #fff;
+  border-color: transparent;
+  transform: translateY(-2px);
+}
+
+.admin-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px 20px 40px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+}
+
+.admin-header p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+  margin-bottom: 14px;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.row .input {
+  flex: 1;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 0.95rem;
+}
+
+.input:focus {
+  outline: 2px solid #bae6fd;
+  border-color: var(--accent);
+}
+
+.btn {
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.btn.ghost {
+  background: #fff;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.btn.danger {
+  background: linear-gradient(135deg, #ef4444, var(--danger));
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.kpis {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.kpis div {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px;
+}
+
+.kpis strong {
+  font-size: 1.2rem;
+  display: block;
+}
+
+.kpis span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.table {
+  display: grid;
+  gap: 8px;
+}
+
+.table-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px;
+  background: #fbfdff;
+}
+
+.event-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  width: 44px;
+  height: 26px;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.pill.on {
+  background: #22c55e;
+  color: #fff;
+}
+
+.status {
+  margin: 8px 0 0;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+@media (max-width: 860px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .table-row {
+    grid-template-columns: auto 1fr;
+  }
+}
+
