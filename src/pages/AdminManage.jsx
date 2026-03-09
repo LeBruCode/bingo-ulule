@@ -8,9 +8,11 @@ export default function AdminManage() {
   const [events, setEvents] = useState([])
   const [newEventName, setNewEventName] = useState("")
   const [newEventCategory, setNewEventCategory] = useState("general")
+  const [newEventMandatory, setNewEventMandatory] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [editingName, setEditingName] = useState("")
   const [editingCategory, setEditingCategory] = useState("general")
+  const [editingMandatory, setEditingMandatory] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState("")
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
@@ -104,7 +106,11 @@ export default function AdminManage() {
       const { response, data } = await fetchJson("/api/admin/events", {
         method: "POST",
         headers: authHeaders,
-        body: JSON.stringify({ name: newEventName, category: newEventCategory })
+        body: JSON.stringify({
+          name: newEventName,
+          category: newEventCategory,
+          is_mandatory: newEventMandatory
+        })
       })
 
       if (!response.ok || !data.ok) {
@@ -113,6 +119,7 @@ export default function AdminManage() {
       }
 
       setNewEventName("")
+      setNewEventMandatory(false)
       setStatus("Evenement ajoute")
       await loadEvents()
     } finally {
@@ -130,7 +137,11 @@ export default function AdminManage() {
       const { response, data } = await fetchJson(`/api/admin/events/${id}`, {
         method: "PATCH",
         headers: authHeaders,
-        body: JSON.stringify({ name: editingName, category: editingCategory })
+        body: JSON.stringify({
+          name: editingName,
+          category: editingCategory,
+          is_mandatory: editingMandatory
+        })
       })
 
       if (!response.ok || !data.ok) {
@@ -141,6 +152,7 @@ export default function AdminManage() {
       setEditingId(null)
       setEditingName("")
       setEditingCategory("general")
+      setEditingMandatory(false)
       setStatus("Evenement modifie")
       await loadEvents()
     } finally {
@@ -199,6 +211,14 @@ export default function AdminManage() {
             </select>
             <button className="btn" onClick={addEvent} disabled={loading}>Ajouter</button>
           </div>
+          <label className="hint row">
+            <input
+              type="checkbox"
+              checked={newEventMandatory}
+              onChange={(e) => setNewEventMandatory(e.target.checked)}
+            />
+            Obligatoire sur toutes les cartes
+          </label>
         </section>
       </div>
 
@@ -225,9 +245,20 @@ export default function AdminManage() {
                       <option key={category} value={category}>{category}</option>
                     ))}
                   </select>
+                  <label className="hint row">
+                    <input
+                      type="checkbox"
+                      checked={editingMandatory}
+                      onChange={(e) => setEditingMandatory(e.target.checked)}
+                    />
+                    Obligatoire
+                  </label>
                 </div>
               ) : (
-                <span className="event-name">{event.name} <small className="event-category">[{event.category}]</small></span>
+                <span className="event-name">
+                  {event.name} <small className="event-category">[{event.category}]</small>
+                  {event.is_mandatory && <small className="event-category"> [OBLIGATOIRE]</small>}
+                </span>
               )}
 
               {editingId === event.id ? (
@@ -242,6 +273,7 @@ export default function AdminManage() {
                     setEditingId(event.id)
                     setEditingName(event.name)
                     setEditingCategory(event.category)
+                    setEditingMandatory(Boolean(event.is_mandatory))
                   }}
                 >
                   Editer

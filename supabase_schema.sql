@@ -2,11 +2,15 @@ create table if not exists events (
   id serial primary key,
   name text not null unique,
   category text not null default 'general',
+  is_mandatory boolean not null default false,
   created_at timestamptz default now()
 );
 
 alter table events
   add column if not exists category text not null default 'general';
+
+alter table events
+  add column if not exists is_mandatory boolean not null default false;
 
 insert into events (name, category) values
   ('Une scene coupee est montree', 'coulisses'),

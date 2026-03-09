@@ -9,7 +9,6 @@ export default function Admin() {
   const [boardRows, setBoardRows] = useState(4)
   const [boardCols, setBoardCols] = useState(5)
   const [events, setEvents] = useState([])
-  const [newCategoryName, setNewCategoryName] = useState("")
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
@@ -31,6 +30,17 @@ export default function Admin() {
     return [...new Set(merged.filter(Boolean))]
   }, [events])
 
+  const winnerTiers = useMemo(() => {
+    const byLine = debug?.winners?.byLine || {}
+    return Object.entries(byLine)
+      .sort(([a], [b]) => Number(a.replace("line_", "")) - Number(b.replace("line_", "")))
+      .map(([key, count]) => {
+        const lineNumber = Number(key.replace("line_", ""))
+        const label = lineNumber === Number(debug?.rows) ? `Carton plein (${lineNumber} lignes)` : `${lineNumber} ligne${lineNumber > 1 ? "s" : ""}`
+        return { key, label, count }
+      })
+  }, [debug])
+
   const eventsByCategory = useMemo(() => {
     const grouped = {}
     for (const category of categories) grouped[category] = []
@@ -41,7 +51,12 @@ export default function Admin() {
     }
 
     for (const category of Object.keys(grouped)) {
-      grouped[category].sort((a, b) => Number(a.triggered) - Number(b.triggered))
+      grouped[category].sort((a, b) => {
+        if (a.triggered !== b.triggered) return Number(a.triggered) - Number(b.triggered)
+        const aOrder = a.trigger_order || Number.MAX_SAFE_INTEGER
+        const bOrder = b.trigger_order || Number.MAX_SAFE_INTEGER
+        return aOrder - bOrder
+      })
     }
 
     return grouped
@@ -58,23 +73,27 @@ export default function Admin() {
     setStatus("")
 
     try {
-      const [debugCall, eventsCall] = await Promise.all([
-        fetchJson("/api/admin/debug", { headers: authHeaders }),
-        fetchJson("/api/admin/events", { headers: authHeaders })
-      ])
+      const bootstrapCall = await fetchJson("/api/admin/bootstrap", { headers: authHeaders })
 
-      if (!debugCall.response.ok || !eventsCall.response.ok) {
+      if (!bootstrapCall.response.ok) {
         setDebug(null)
         setEvents([])
         setStatus("Session invalide: reconnecte-toi")
         return
       }
 
-      setDebug(debugCall.data)
-      setBoardRows(debugCall.data.rows || 4)
-      setBoardCols(debugCall.data.cols || 5)
-      setEvents(eventsCall.data.events || [])
-      setStatus("Dashboard charge")
+      setDebug(bootstrapCall.data.debug)
+      setBoardRows(bootstrapCall.data.debug?.rows || 4)
+      setBoardCols(bootstrapCall.data.debug?.cols || 5)
+      setEvents(bootstrapCall.data.events?.events || [])
+      if (bootstrapCall.data.bootstrapping) {
+        setStatus("Initialisation des cartes en cours...")
+        setTimeout(() => {
+          loadDashboard()
+        }, 1200)
+      } else {
+        setStatus("Dashboard charge")
+      }
     } finally {
       setLoading(false)
     }
@@ -88,28 +107,6 @@ export default function Admin() {
     loadDashboard()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  function normalizeCategory(value) {
-    return value
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-_]/g, "")
-      .slice(0, 40)
-  }
-
-  function createCategory() {
-    const normalized = normalizeCategory(newCategoryName)
-    if (!normalized) return
-
-    const current = JSON.parse(localStorage.getItem("bingoCategories") || "[]")
-    const next = [...new Set([...current, normalized])]
-    localStorage.setItem("bingoCategories", JSON.stringify(next))
-
-    setNewCategoryName("")
-    setStatus(`Categorie creee: ${normalized}`)
-    setEvents((prev) => [...prev])
-  }
 
   async function toggleEvent(event) {
     setLoading(true)
@@ -132,10 +129,25 @@ export default function Admin() {
           item.id === event.id
             ? {
                 ...item,
-                triggered: !item.triggered
+                triggered: !item.triggered,
+                trigger_order: item.triggered
+                  ? null
+                  : prev.filter((candidate) => candidate.triggered).length + 1,
+                activation_count: item.triggered
+                  ? item.activation_count || 0
+                  : (item.activation_count || 0) + 1
               }
             : item
         )
+      )
+      setDebug((prev) =>
+        prev
+          ? {
+              ...prev,
+              triggered: Math.max(0, prev.triggered + (event.triggered ? -1 : 1)),
+              activationCount: Math.max(0, (prev.activationCount || 0) + (event.triggered ? 0 : 1))
+            }
+          : prev
       )
       setStatus(event.triggered ? "Evenement desactive" : "Evenement active")
     } finally {
@@ -303,28 +315,33 @@ export default function Admin() {
             </button>
           </div>
           {debug && (
-            <div className="kpis">
-              <div><strong>{debug.events}</strong><span>events</span></div>
-              <div><strong>{debug.players}</strong><span>players</span></div>
-              <div><strong>{debug.triggered}</strong><span>triggered</span></div>
-              <div><strong>{debug.rows}x{debug.cols}</strong><span>grille</span></div>
-              <div><strong>{debug.gameVersion}</strong><span>game ver</span></div>
-            </div>
+            <>
+              <div className="kpis">
+                <div><strong>{debug.events}</strong><span>events</span></div>
+                <div><strong>{debug.players}</strong><span>players</span></div>
+                <div><strong>{debug.triggered}</strong><span>triggered</span></div>
+                <div><strong>{debug.activationCount || 0}</strong><span>activations</span></div>
+                <div><strong>{debug.rows}x{debug.cols}</strong><span>grille</span></div>
+                <div><strong>{debug.gameVersion}</strong><span>game ver</span></div>
+              </div>
+              <div className="winner-grid">
+                {winnerTiers.map((tier) => (
+                  <div key={tier.key} className="winner-card">
+                    <span>{tier.label}</span>
+                    <strong>{tier.count}</strong>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </section>
 
         <section className="panel">
-          <h2>Nouvelle categorie</h2>
-          <div className="row">
-            <input
-              className="input"
-              placeholder="ex: backstage-impro"
-              value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
-            />
-            <button className="btn" onClick={createCategory}>Creer</button>
-          </div>
-          <p className="hint">Les categories sont affichees les unes sous les autres.</p>
+          <h2>Edition</h2>
+          <p className="hint">Creation de categories et edition des intitules dans la vue edition.</p>
+          <Link className="btn ghost" to="/admin/manage">
+            Ouvrir la vue edition
+          </Link>
         </section>
       </div>
 
@@ -361,7 +378,8 @@ export default function Admin() {
                     }}
                     onClick={() => toggleEvent(event)}
                   >
-                    {event.name}
+                    <span>{event.name}</span>
+                    {event.trigger_order ? <span className="event-order">#{event.trigger_order}</span> : null}
                   </button>
                 ))}
               </div>

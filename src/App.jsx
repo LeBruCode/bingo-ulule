@@ -3,6 +3,7 @@ import Player from "./pages/Player.jsx"
 import Admin from "./pages/Admin.jsx"
 import AdminLogin from "./pages/AdminLogin.jsx"
 import AdminManage from "./pages/AdminManage.jsx"
+import Overlay from "./pages/Overlay.jsx"
 
 function AdminGuard({ children }) {
   const adminKey = localStorage.getItem("bingoAdminKey")
@@ -15,6 +16,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Player />} />
+        <Route path="/overlay" element={<Overlay />} />
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route
           path="/admin"
