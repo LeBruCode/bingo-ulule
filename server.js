@@ -671,6 +671,11 @@ fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req,
   }
 
   const updates = {}
+  const currentEvent = events.find((event) => event.id === id)
+  if (!currentEvent) {
+    reply.code(404)
+    return { ok: false, error: "not_found" }
+  }
 
   if (typeof req.body?.name === "string") {
     const normalizedName = req.body.name.trim()
@@ -700,6 +705,10 @@ fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req,
     return { ok: false, error: "no_update" }
   }
 
+  const needsCardRegeneration =
+    Object.prototype.hasOwnProperty.call(updates, "name") ||
+    Object.prototype.hasOwnProperty.call(updates, "is_mandatory")
+
   const { data, error } = await supabase
     .from("events")
     .update(updates)
@@ -717,14 +726,20 @@ fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req,
     return { ok: false, error: "not_found" }
   }
 
-  const ok = await loadEvents()
-  if (!ok) {
-    reply.code(500)
-    return { ok: false, error: "reload_failed" }
+  if (needsCardRegeneration) {
+    const ok = await loadEvents()
+    if (!ok) {
+      reply.code(500)
+      return { ok: false, error: "reload_failed" }
+    }
+
+    refreshConnectedPlayers()
+    return { ok: true, gameReset: true }
   }
 
-  refreshConnectedPlayers()
-  return { ok: true, gameReset: true }
+  // Category-only update: keep current round state and cards untouched.
+  events = events.map((event) => (event.id === id ? { ...event, ...updates } : event))
+  return { ok: true, gameReset: false }
 })
 
 async function handleTrigger(req, reply) {
