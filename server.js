@@ -68,6 +68,12 @@ const MAX_ACTIVATION_LOG = Number(process.env.MAX_ACTIVATION_LOG || 5000)
 const ADMIN_SESSION_COOKIE = "bingo_admin_session"
 const ADMIN_SESSION_TTL_SECONDS = Number(process.env.ADMIN_SESSION_TTL_SECONDS || 60 * 60 * 12)
 const adminSessions = new Map()
+const ULULE_API_BASE = process.env.ULULE_API_BASE || "https://api.ulule.com/v1"
+const ULULE_API_KEY = process.env.ULULE_API_KEY || ""
+const ULULE_PROJECT_ID = process.env.ULULE_PROJECT_ID || ""
+const ULULE_MIN_CONTRIBUTION_CENTS = Number(process.env.ULULE_MIN_CONTRIBUTION_CENTS || 1000)
+const ULULE_EMAIL_CACHE_TTL_MS = Number(process.env.ULULE_EMAIL_CACHE_TTL_MS || 5 * 60 * 1000)
+const ululeEligibilityCache = new Map()
 let progressStatsCache = null
 let progressStatsDirty = true
 
@@ -642,6 +648,102 @@ function normalizeRaffleEmail(value) {
   return value.trim().toLowerCase()
 }
 
+function parseOrderTotalCents(order) {
+  const raw =
+    order?.order_total ??
+    order?.orderTotal ??
+    order?.total ??
+    order?.amount_total ??
+    order?.amount
+  const value = Number(raw)
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+}
+
+function hasOrderReward(order) {
+  const items = Array.isArray(order?.items) ? order.items : []
+  return items.some((item) => Boolean(item?.reward_id || item?.reward?.id))
+}
+
+function findOrderEmail(order) {
+  const direct = order?.user?.email || order?.email || order?.backer_email
+  if (typeof direct === "string" && direct.trim()) return direct.trim().toLowerCase()
+  return ""
+}
+
+function parseNextQueryFromMeta(meta) {
+  if (!meta?.next || typeof meta.next !== "string") return ""
+  return meta.next
+}
+
+async function fetchUluleOrdersByStatus(status) {
+  const endpointBase = `${ULULE_API_BASE}/projects/${ULULE_PROJECT_ID}/orders`
+  let nextQuery = `?status=${encodeURIComponent(status)}&limit=20&show_anonymous=true`
+  const orders = []
+
+  for (let page = 0; page < 20 && nextQuery; page++) {
+    const response = await fetch(`${endpointBase}${nextQuery}`, {
+      headers: {
+        Authorization: `APIKey ${ULULE_API_KEY}`,
+        Accept: "application/json"
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error(`ulule_${response.status}`)
+    }
+
+    const payload = await response.json().catch(() => ({}))
+    const pageOrders = Array.isArray(payload?.orders) ? payload.orders : []
+    orders.push(...pageOrders)
+    nextQuery = parseNextQueryFromMeta(payload?.meta)
+  }
+
+  return orders
+}
+
+async function checkUluleEligibility(email) {
+  const normalizedEmail = normalizeRaffleEmail(email)
+  if (!normalizedEmail) return { ok: false, error: "invalid_email" }
+  if (!ULULE_API_KEY || !ULULE_PROJECT_ID) return { ok: false, error: "ulule_not_configured" }
+
+  const cached = ululeEligibilityCache.get(normalizedEmail)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
+  try {
+    const [doneOrders, completedOrders] = await Promise.all([
+      fetchUluleOrdersByStatus("payment-done"),
+      fetchUluleOrdersByStatus("payment-completed")
+    ])
+    const allOrders = [...doneOrders, ...completedOrders]
+    const matchingOrders = allOrders.filter((order) => findOrderEmail(order) === normalizedEmail)
+
+    const qualifyingOrder = matchingOrders.find((order) => {
+      const totalCents = parseOrderTotalCents(order)
+      return hasOrderReward(order) || totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
+    })
+
+    const result = qualifyingOrder
+      ? {
+          ok: true,
+          eligible: true,
+          hasReward: hasOrderReward(qualifyingOrder),
+          orderTotalCents: parseOrderTotalCents(qualifyingOrder)
+        }
+      : { ok: true, eligible: false }
+
+    ululeEligibilityCache.set(normalizedEmail, {
+      value: result,
+      expiresAt: Date.now() + ULULE_EMAIL_CACHE_TTL_MS
+    })
+    return result
+  } catch (error) {
+    fastify.log.error({ error, email: normalizedEmail }, "Ulule eligibility check failed")
+    return { ok: false, error: "ulule_check_failed" }
+  }
+}
+
 function parseTierInput(rawTier) {
   const tier = Number(rawTier || currentTargetTier)
   if (!Number.isInteger(tier) || tier < 1 || tier > ROWS) return null
@@ -654,6 +756,7 @@ function serializeRaffleTier(tier) {
   const entries = [...entriesMap.values()].map((entry) => ({
     id: entry.id,
     email: entry.email,
+    ulule: entry.ulule || null,
     source: entry.source,
     createdAt: entry.createdAt
   }))
@@ -682,7 +785,7 @@ function serializeRaffleSummary() {
   }
 }
 
-function addRaffleEntry({ tier, email, source = "manual" }) {
+function addRaffleEntry({ tier, email, source = "manual", ulule = null }) {
   const tierIndex = tier - 1
   const entriesMap = raffleEntriesByTier[tierIndex]
   const normalizedEmail = normalizeRaffleEmail(email)
@@ -701,6 +804,7 @@ function addRaffleEntry({ tier, email, source = "manual" }) {
   const entry = {
     id: `r${raffleEntrySeq++}`,
     email: normalizedEmail,
+    ulule,
     source,
     createdAt: new Date().toISOString()
   }
@@ -913,10 +1017,25 @@ fastify.post("/api/admin/raffle/enter", { preHandler: requireAdmin }, async (req
     return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
   }
 
+  const ululeCheck = await checkUluleEligibility(req.body?.email)
+  if (!ululeCheck.ok) {
+    reply.code(500)
+    return { ok: false, error: ululeCheck.error || "ulule_check_failed" }
+  }
+  if (!ululeCheck.eligible) {
+    reply.code(400)
+    return { ok: false, error: "not_ulule_eligible" }
+  }
+
   const outcome = addRaffleEntry({
     tier,
     email: req.body?.email,
-    source: "manual"
+    source: "manual",
+    ulule: {
+      verifiedAt: new Date().toISOString(),
+      hasReward: Boolean(ululeCheck.hasReward),
+      orderTotalCents: Number(ululeCheck.orderTotalCents || 0)
+    }
   })
 
   if (!outcome.ok) {

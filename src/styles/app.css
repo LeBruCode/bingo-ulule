@@ -670,6 +670,17 @@ body.overlay-mode #root {
   background: rgba(31, 41, 55, 0.72);
   color: #e5e7eb;
   transition: 0.18s ease;
+  display: grid;
+  gap: 4px;
+}
+
+.raffle-item strong {
+  font-size: 0.9rem;
+}
+
+.raffle-item small {
+  color: #9ca3af;
+  font-size: 0.72rem;
 }
 
 .raffle-item.active {

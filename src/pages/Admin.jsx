@@ -331,6 +331,14 @@ export default function Admin() {
         body: JSON.stringify({ tier: debug?.targetTier || 1, email: raffleEmail.trim() })
       })
       if (!response.ok || !data.ok) {
+        if (data.error === "not_ulule_eligible") {
+          setStatus("Email non éligible Ulule: contribution avec contrepartie ou >= 10€ requise")
+          return
+        }
+        if (data.error === "ulule_not_configured") {
+          setStatus("Chaînage Ulule non configuré côté serveur")
+          return
+        }
         setStatus(`Erreur préinscription: ${data.error || "unknown_error"}`)
         return
       }
@@ -559,7 +567,12 @@ export default function Admin() {
                 key={entry.id}
                 className={`raffle-item ${index === rouletteIndex ? "active" : ""} ${raffleWinner?.id === entry.id ? "winner" : ""}`}
               >
-                {entry.email}
+                <strong>{entry.email}</strong>
+                {entry.ulule ? (
+                  <small>
+                    Ulule validé • {entry.ulule.hasReward ? "contrepartie" : "don"} • {(entry.ulule.orderTotalCents / 100).toFixed(2)}€
+                  </small>
+                ) : null}
               </div>
             ))
           )}
