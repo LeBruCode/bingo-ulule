@@ -372,7 +372,7 @@ fastify.post("/api/admin/events", { preHandler: requireAdmin }, async (req, repl
   if (error) {
     fastify.log.error({ error }, "Error creating event")
     reply.code(500)
-    return { ok: false, error: "create_failed" }
+    return { ok: false, error: "create_failed", details: error.message }
   }
 
   const ok = await loadEvents()
@@ -427,7 +427,7 @@ fastify.patch("/api/admin/events/:id", { preHandler: requireAdmin }, async (req,
   if (error) {
     fastify.log.error({ error }, "Error updating event")
     reply.code(500)
-    return { ok: false, error: "update_failed" }
+    return { ok: false, error: "update_failed", details: error.message }
   }
 
   if (!data || data.length === 0) {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 
 const DEFAULT_CATEGORIES = ["coulisses", "creative", "chat", "public", "dons", "general"]
 
@@ -7,12 +7,7 @@ export default function Admin() {
   const navigate = useNavigate()
   const [debug, setDebug] = useState(null)
   const [events, setEvents] = useState([])
-  const [newEventName, setNewEventName] = useState("")
-  const [newEventCategory, setNewEventCategory] = useState("general")
   const [newCategoryName, setNewCategoryName] = useState("")
-  const [editingId, setEditingId] = useState(null)
-  const [editingName, setEditingName] = useState("")
-  const [editingCategory, setEditingCategory] = useState("general")
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
@@ -37,13 +32,16 @@ export default function Admin() {
   const eventsByCategory = useMemo(() => {
     const grouped = {}
     for (const category of categories) grouped[category] = []
+
     for (const event of events) {
       if (!grouped[event.category]) grouped[event.category] = []
       grouped[event.category].push(event)
     }
+
     for (const category of Object.keys(grouped)) {
       grouped[category].sort((a, b) => Number(a.triggered) - Number(b.triggered))
     }
+
     return grouped
   }, [events, categories])
 
@@ -56,6 +54,7 @@ export default function Admin() {
   async function loadDashboard() {
     setLoading(true)
     setStatus("")
+
     try {
       const [debugCall, eventsCall] = await Promise.all([
         fetchJson("/api/admin/debug", { headers: authHeaders }),
@@ -86,59 +85,32 @@ export default function Admin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function addEvent() {
-    if (!newEventName.trim()) return
-    setLoading(true)
-    setStatus("")
-    try {
-      const { response, data } = await fetchJson("/api/admin/events", {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ name: newEventName, category: newEventCategory })
-      })
-
-      if (!response.ok || !data.ok) {
-        setStatus(`Erreur ajout: ${data.error || "unknown_error"}`)
-        return
-      }
-
-      setNewEventName("")
-      setStatus("Evenement ajoute")
-      await loadDashboard()
-    } finally {
-      setLoading(false)
-    }
+  function normalizeCategory(value) {
+    return value
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-_]/g, "")
+      .slice(0, 40)
   }
 
-  async function saveEvent(id) {
-    if (!editingName.trim()) return
-    setLoading(true)
-    setStatus("")
-    try {
-      const { response, data } = await fetchJson(`/api/admin/events/${id}`, {
-        method: "PATCH",
-        headers: authHeaders,
-        body: JSON.stringify({ name: editingName, category: editingCategory })
-      })
+  function createCategory() {
+    const normalized = normalizeCategory(newCategoryName)
+    if (!normalized) return
 
-      if (!response.ok || !data.ok) {
-        setStatus(`Erreur edition: ${data.error || "unknown_error"}`)
-        return
-      }
+    const current = JSON.parse(localStorage.getItem("bingoCategories") || "[]")
+    const next = [...new Set([...current, normalized])]
+    localStorage.setItem("bingoCategories", JSON.stringify(next))
 
-      setEditingId(null)
-      setEditingName("")
-      setEditingCategory("general")
-      setStatus("Evenement mis a jour")
-      await loadDashboard()
-    } finally {
-      setLoading(false)
-    }
+    setNewCategoryName("")
+    setStatus(`Categorie creee: ${normalized}`)
+    setEvents((prev) => [...prev])
   }
 
   async function toggleEvent(event) {
     setLoading(true)
     setStatus("")
+
     try {
       const { response, data } = await fetchJson(`/api/admin/events/${event.id}/toggle`, {
         method: "POST",
@@ -151,19 +123,29 @@ export default function Admin() {
         return
       }
 
+      setEvents((prev) =>
+        prev.map((item) =>
+          item.id === event.id
+            ? {
+                ...item,
+                triggered: !item.triggered
+              }
+            : item
+        )
+      )
       setStatus(event.triggered ? "Evenement desactive" : "Evenement active")
-      await loadDashboard()
     } finally {
       setLoading(false)
     }
   }
 
   async function moveEventToCategory(eventId, category) {
-    const event = events.find((e) => e.id === eventId)
+    const event = events.find((item) => item.id === eventId)
     if (!event || event.category === category) return
 
     setLoading(true)
     setStatus("")
+
     try {
       const { response, data } = await fetchJson(`/api/admin/events/${eventId}`, {
         method: "PATCH",
@@ -176,36 +158,26 @@ export default function Admin() {
         return
       }
 
+      setEvents((prev) =>
+        prev.map((item) =>
+          item.id === eventId
+            ? {
+                ...item,
+                category
+              }
+            : item
+        )
+      )
       setStatus(`Evenement deplace vers ${category}`)
-      await loadDashboard()
     } finally {
       setLoading(false)
     }
   }
 
-  function createCategory() {
-    const normalized = newCategoryName
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-_]/g, "")
-      .slice(0, 40)
-
-    if (!normalized) return
-
-    const current = JSON.parse(localStorage.getItem("bingoCategories") || "[]")
-    const next = [...new Set([...current, normalized])]
-    localStorage.setItem("bingoCategories", JSON.stringify(next))
-
-    setNewCategoryName("")
-    setNewEventCategory(normalized)
-    setStatus(`Categorie creee: ${normalized}`)
-    setEvents((prev) => [...prev])
-  }
-
   async function reloadFromSupabase() {
     setLoading(true)
     setStatus("")
+
     try {
       const { response, data } = await fetchJson("/api/admin/reload", {
         method: "POST",
@@ -227,6 +199,7 @@ export default function Admin() {
   async function resetRound() {
     setLoading(true)
     setStatus("")
+
     try {
       const { response, data } = await fetchJson("/api/admin/reset-round", {
         method: "POST",
@@ -255,12 +228,15 @@ export default function Admin() {
       <div className="admin-header">
         <div>
           <h1>Live Dashboard</h1>
-          <p>Glisse-depose des evenements entre categories + activation en un clic.</p>
+          <p>Clique un evenement pour l activer/desactiver. Glisse-depose entre categories.</p>
         </div>
         <div className="row">
           <button className="btn ghost" onClick={loadDashboard} disabled={loading}>
             {loading ? "Chargement..." : "Rafraichir"}
           </button>
+          <Link className="btn ghost" to="/admin/manage">
+            Vue edition
+          </Link>
           <button className="btn ghost" onClick={logout}>
             Deconnexion
           </button>
@@ -293,45 +269,23 @@ export default function Admin() {
           <div className="row">
             <input
               className="input"
-              placeholder="ex: coulisses-plateau"
+              placeholder="ex: backstage-impro"
               value={newCategoryName}
               onChange={(e) => setNewCategoryName(e.target.value)}
             />
             <button className="btn" onClick={createCategory}>Creer</button>
           </div>
-          <p className="hint">Astuce: cree la categorie puis glisse un evenement dedans.</p>
+          <p className="hint">Les categories sont affichees les unes sous les autres.</p>
         </section>
       </div>
 
       <section className="panel">
-        <h2>Ajouter un evenement</h2>
-        <div className="row">
-          <input
-            className="input"
-            placeholder="Nouvel intitule"
-            value={newEventName}
-            onChange={(e) => setNewEventName(e.target.value)}
-          />
-          <select
-            className="input"
-            value={newEventCategory}
-            onChange={(e) => setNewEventCategory(e.target.value)}
-          >
-            {categories.map((category) => (
-              <option key={category} value={category}>{category}</option>
-            ))}
-          </select>
-          <button className="btn" onClick={addEvent} disabled={loading}>Ajouter</button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Board categories (drag and drop)</h2>
-        <div className="board">
+        <h2>Categories</h2>
+        <div className="category-stack">
           {categories.map((category) => (
-            <div
+            <section
               key={category}
-              className="column"
+              className="category-section"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault()
@@ -340,68 +294,29 @@ export default function Admin() {
                 setDraggedEventId(null)
               }}
             >
-              <div className="column-head">
+              <header className="category-section-head">
                 <h3>{category}</h3>
                 <span>{eventsByCategory[category]?.length || 0}</span>
-              </div>
+              </header>
 
-              <div className="column-list">
+              <div className="category-events">
                 {(eventsByCategory[category] || []).map((event) => (
-                  <div
+                  <button
                     key={event.id}
-                    className={`event-card ${event.triggered ? "on" : ""}`}
+                    type="button"
+                    className={`event-chip ${event.triggered ? "on" : ""}`}
                     draggable
                     onDragStart={(e) => {
                       setDraggedEventId(event.id)
                       e.dataTransfer.setData("text/event-id", String(event.id))
                     }}
+                    onClick={() => toggleEvent(event)}
                   >
-                    {editingId === event.id ? (
-                      <div className="event-edit">
-                        <input
-                          className="input"
-                          value={editingName}
-                          onChange={(e) => setEditingName(e.target.value)}
-                        />
-                        <select
-                          className="input"
-                          value={editingCategory}
-                          onChange={(e) => setEditingCategory(e.target.value)}
-                        >
-                          {categories.map((c) => (
-                            <option key={c} value={c}>{c}</option>
-                          ))}
-                        </select>
-                        <div className="row">
-                          <button className="btn" onClick={() => saveEvent(event.id)} disabled={loading}>Sauver</button>
-                          <button className="btn ghost" onClick={() => setEditingId(null)}>Annuler</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="event-title">{event.name}</div>
-                        <div className="row">
-                          <button className="btn ghost" onClick={() => toggleEvent(event)} disabled={loading}>
-                            {event.triggered ? "Desactiver" : "Activer"}
-                          </button>
-                          <button
-                            className="btn ghost"
-                            onClick={() => {
-                              setEditingId(event.id)
-                              setEditingName(event.name)
-                              setEditingCategory(event.category)
-                            }}
-                            disabled={loading}
-                          >
-                            Editer
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                    {event.name}
+                  </button>
                 ))}
               </div>
-            </div>
+            </section>
           ))}
         </div>
       </section>

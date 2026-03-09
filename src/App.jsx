@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import Player from "./pages/Player.jsx"
 import Admin from "./pages/Admin.jsx"
 import AdminLogin from "./pages/AdminLogin.jsx"
+import AdminManage from "./pages/AdminManage.jsx"
 
 function AdminGuard({ children }) {
   const adminKey = localStorage.getItem("bingoAdminKey")
@@ -20,6 +21,14 @@ export default function App() {
           element={
             <AdminGuard>
               <Admin />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/manage"
+          element={
+            <AdminGuard>
+              <AdminManage />
             </AdminGuard>
           }
         />
