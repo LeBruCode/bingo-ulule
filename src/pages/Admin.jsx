@@ -24,13 +24,6 @@ export default function Admin() {
     [adminKey]
   )
 
-  const authOnlyHeaders = useMemo(
-    () => ({
-      "x-admin-key": adminKey
-    }),
-    [adminKey]
-  )
-
   const categories = useMemo(() => {
     const fromEvents = events.map((event) => event.category)
     const fromStorage = JSON.parse(localStorage.getItem("bingoCategories") || "[]")
@@ -47,6 +40,27 @@ export default function Admin() {
         const label = lineNumber === Number(debug?.rows) ? `Carton plein (${lineNumber} lignes)` : `${lineNumber} ligne${lineNumber > 1 ? "s" : ""}`
         return { key, label, count }
       })
+  }, [debug])
+
+  const progressTiers = useMemo(() => {
+    const byLine = debug?.progressByLine || {}
+    const rows = Number(debug?.rows || 0)
+    if (!rows) return []
+
+    return Array.from({ length: rows }, (_, index) => {
+      const tier = index + 1
+      const key = `line_${tier}`
+      const stats = byLine[key] || { oneAway: 0, missingBuckets: {} }
+      const label = tier === rows ? "Carton plein" : `${tier} ligne${tier > 1 ? "s" : ""}`
+      const sortedBuckets = Object.entries(stats.missingBuckets || {})
+        .sort(([a], [b]) => {
+          if (a === "7+") return 1
+          if (b === "7+") return -1
+          return Number(a) - Number(b)
+        })
+        .slice(0, 4)
+      return { key, label, oneAway: stats.oneAway || 0, sortedBuckets }
+    })
   }, [debug])
 
   const tierControls = useMemo(() => {
@@ -215,7 +229,8 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/reload", {
         method: "POST",
-        headers: authOnlyHeaders
+        headers: authHeaders,
+        body: "{}"
       })
 
       if (!response.ok || !data.ok) {
@@ -237,7 +252,8 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/reset-round", {
         method: "POST",
-        headers: authOnlyHeaders
+        headers: authHeaders,
+        body: "{}"
       })
 
       if (!response.ok || !data.ok) {
@@ -308,7 +324,6 @@ export default function Admin() {
       <div className="admin-header">
         <div>
           <h1>Tableau de bord live</h1>
-          <p>Clique un événement pour l activer/desactiver. Glisse-depose entre catégories.</p>
         </div>
         <div className="row">
           <button className="btn ghost" onClick={loadDashboard} disabled={loading}>
@@ -378,16 +393,28 @@ export default function Admin() {
               <div className="kpis">
                 <div><strong>{debug.events}</strong><span>événements</span></div>
                 <div><strong>{debug.players}</strong><span>joueurs</span></div>
-                <div><strong>{debug.triggered}</strong><span>activés</span></div>
+                <div><strong>{debug.triggered}</strong><span>tirés</span></div>
                 <div><strong>{debug.activationCount || 0}</strong><span>activations</span></div>
                 <div><strong>{debug.rows}x{debug.cols}</strong><span>grille</span></div>
-                <div><strong>{debug.gameVersion}</strong><span>version de partie</span></div>
               </div>
               <div className="winner-grid">
                 {winnerTiers.map((tier) => (
                   <div key={tier.key} className="winner-card">
                     <span>{tier.label}</span>
                     <strong>{tier.count}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className="winner-grid">
+                {progressTiers.map((tier) => (
+                  <div key={tier.key} className="winner-card">
+                    <span>{tier.label}</span>
+                    <strong>À 1 case: {tier.oneAway}</strong>
+                    <small className="hint">
+                      {tier.sortedBuckets.length > 0
+                        ? tier.sortedBuckets.map(([missing, count]) => `${missing} case(s): ${count}`).join(" • ")
+                        : "Aucune donnée"}
+                    </small>
                   </div>
                 ))}
               </div>

@@ -60,6 +60,8 @@ let isBootstrapped = false
 let bootstrapError = null
 let bootstrapPromise = null
 const MAX_ACTIVATION_LOG = Number(process.env.MAX_ACTIVATION_LOG || 5000)
+let progressStatsCache = null
+let progressStatsDirty = true
 
 function boardSize() {
   return ROWS * COLS
@@ -157,6 +159,10 @@ function serializeState() {
   }
 }
 
+function markProgressStatsDirty() {
+  progressStatsDirty = true
+}
+
 function pickUniqueEvents(source, size) {
   const pool = [...source]
 
@@ -193,6 +199,7 @@ function resetGameState() {
   activationSequence = 0
   activationLog = []
   activationCountByEvent = new Map()
+  markProgressStatsDirty()
   gameVersion += 1
 }
 
@@ -205,6 +212,7 @@ function clearRoundProgress() {
   activationSequence = 0
   activationLog = []
   activationCountByEvent = new Map()
+  markProgressStatsDirty()
 }
 
 function generateCards() {
@@ -365,6 +373,7 @@ function setEventTriggered(eventName, active) {
     triggered.push(eventName)
     recordActivation(eventName)
     applyEventImpact(eventName, 1, true)
+    markProgressStatsDirty()
     return true
   }
 
@@ -373,6 +382,7 @@ function setEventTriggered(eventName, active) {
   triggered = triggered.filter((name) => name !== eventName)
   rebuildCardProgressFromTriggered()
   recomputeWinners()
+  markProgressStatsDirty()
   return true
 }
 
@@ -381,6 +391,7 @@ function attachPlayerToCard(token, cardIndex) {
     playersByCard.set(cardIndex, new Set())
   }
   playersByCard.get(cardIndex).add(token)
+  markProgressStatsDirty()
 }
 
 function ensurePlayer(token) {
@@ -510,8 +521,45 @@ function getDebugState() {
     targetLabel:
       currentTargetTier === ROWS ? `Carton plein (${ROWS} lignes)` : `${currentTargetTier} ligne${currentTargetTier > 1 ? "s" : ""}`,
     tierLocked: (winners[currentTargetTier - 1]?.size || 0) > 0,
+    progressByLine: getProgressStatsByLine(),
     winners: serializeWinnerCounts()
   }
+}
+
+function getProgressStatsByLine() {
+  if (!progressStatsDirty && progressStatsCache) return progressStatsCache
+
+  const byLine = {}
+  for (let tier = 1; tier <= ROWS; tier++) {
+    byLine[`line_${tier}`] = {
+      oneAway: 0,
+      missingBuckets: {}
+    }
+  }
+
+  for (const [cardIndex, tokens] of playersByCard.entries()) {
+    const playerCount = tokens?.size || 0
+    if (!playerCount) continue
+
+    const rowHits = cardRowHits[cardIndex]
+    if (!rowHits) continue
+
+    const missingByRow = rowHits.map((hits) => Math.max(0, COLS - hits)).sort((a, b) => a - b)
+    let cumulativeMissing = 0
+
+    for (let tier = 1; tier <= ROWS; tier++) {
+      cumulativeMissing += missingByRow[tier - 1] || 0
+      const key = `line_${tier}`
+      const tierStats = byLine[key]
+      const bucketKey = cumulativeMissing >= 7 ? "7+" : String(cumulativeMissing)
+      tierStats.missingBuckets[bucketKey] = (tierStats.missingBuckets[bucketKey] || 0) + playerCount
+      if (cumulativeMissing === 1) tierStats.oneAway += playerCount
+    }
+  }
+
+  progressStatsCache = byLine
+  progressStatsDirty = false
+  return byLine
 }
 
 function serializeAdminEvents() {
