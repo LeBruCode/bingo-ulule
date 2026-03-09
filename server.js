@@ -51,6 +51,7 @@ let triggered = []
 let triggeredSet = new Set()
 let winners = Array.from({ length: ROWS }, () => new Set())
 let rewardedTokens = new Set()
+let currentTargetTier = 1
 let activationSequence = 0
 let activationLog = []
 let activationCountByEvent = new Map()
@@ -141,6 +142,12 @@ function serializeState() {
   return {
     gameVersion,
     board: serializeBoardConfig(),
+    phase: {
+      targetTier: currentTargetTier,
+      targetLabel:
+        currentTargetTier === ROWS ? `Carton plein (${ROWS} lignes)` : `${currentTargetTier} ligne${currentTargetTier > 1 ? "s" : ""}`,
+      locked: (winners[currentTargetTier - 1]?.size || 0) > 0
+    },
     stats: {
       eventsTotal: eventNames.length,
       players: players.size
@@ -182,6 +189,7 @@ function resetGameState() {
   triggeredSet = new Set()
   winners = createWinnerTiers()
   rewardedTokens = new Set()
+  currentTargetTier = 1
   activationSequence = 0
   activationLog = []
   activationCountByEvent = new Map()
@@ -193,6 +201,7 @@ function clearRoundProgress() {
   triggeredSet = new Set()
   winners = createWinnerTiers()
   rewardedTokens = new Set()
+  currentTargetTier = 1
   activationSequence = 0
   activationLog = []
   activationCountByEvent = new Map()
@@ -289,34 +298,46 @@ function checkCard(cardIndex) {
   if (!card) return
 
   const lines = cardLineCounts[cardIndex] || 0
+  const tier = currentTargetTier
+  const currentTierWinners = winners[tier - 1]
+  if (!currentTierWinners || currentTierWinners.size > 0) return
   const cardTokens = playersByCard.get(cardIndex)
   if (!cardTokens || cardTokens.size === 0) return
 
   for (const token of cardTokens) {
     if (rewardedTokens.has(token)) continue
-
-    // Sequential and exclusive rewards:
-    // line_1 -> line_2 -> ... -> line_N (full).
-    for (let tier = 1; tier <= ROWS; tier++) {
-      const currentTier = winners[tier - 1]
-      const previousTier = tier > 1 ? winners[tier - 2] : null
-      const previousAwarded = tier === 1 || (previousTier && previousTier.size > 0)
-
-      if (lines >= tier && previousAwarded && currentTier.size === 0) {
-        currentTier.add(token)
-        rewardedTokens.add(token)
-        break
-      }
+    if (lines >= tier) {
+      currentTierWinners.add(token)
+      rewardedTokens.add(token)
+      break
     }
   }
 }
 
 function recomputeWinners() {
+  const preservedWinners = winners.map((set) => new Set(set))
   winners = createWinnerTiers()
   rewardedTokens = new Set()
 
+  for (let tier = 1; tier <= ROWS; tier++) {
+    if (tier >= currentTargetTier) continue
+    const preserved = preservedWinners[tier - 1]
+    if (!preserved || preserved.size === 0) continue
+    const winnerToken = preserved.values().next().value
+    if (!winnerToken) continue
+    winners[tier - 1].add(winnerToken)
+    rewardedTokens.add(winnerToken)
+  }
+
   for (const cardIndex of playersByCard.keys()) {
     checkCard(cardIndex)
+  }
+}
+
+function evaluateCurrentTierAcrossCards() {
+  for (const cardIndex of playersByCard.keys()) {
+    checkCard(cardIndex)
+    if ((winners[currentTargetTier - 1]?.size || 0) > 0) break
   }
 }
 
@@ -485,6 +506,10 @@ function getDebugState() {
     players: players.size,
     triggered: triggered.length,
     activationCount: activationSequence,
+    targetTier: currentTargetTier,
+    targetLabel:
+      currentTargetTier === ROWS ? `Carton plein (${ROWS} lignes)` : `${currentTargetTier} ligne${currentTargetTier > 1 ? "s" : ""}`,
+    tierLocked: (winners[currentTargetTier - 1]?.size || 0) > 0,
     winners: serializeWinnerCounts()
   }
 }
@@ -608,6 +633,7 @@ fastify.patch("/api/admin/board", { preHandler: requireAdmin }, async (req, repl
 
   ROWS = nextRows
   COLS = nextCols
+  currentTargetTier = Math.min(currentTargetTier, ROWS)
   const generated = generateCards()
   if (!generated) {
     reply.code(400)
@@ -616,6 +642,29 @@ fastify.patch("/api/admin/board", { preHandler: requireAdmin }, async (req, repl
   refreshConnectedPlayers()
 
   return { ok: true, board: serializeBoardConfig(), gameVersion }
+})
+
+fastify.post("/api/admin/target-tier", { preHandler: requireAdmin }, async (req, reply) => {
+  const tier = Number(req.body?.tier)
+  if (!Number.isInteger(tier) || tier < 1 || tier > ROWS) {
+    reply.code(400)
+    return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
+  }
+
+  if (tier < currentTargetTier) {
+    reply.code(400)
+    return { ok: false, error: "cannot_decrease_tier", current: currentTargetTier }
+  }
+
+  if (tier === currentTargetTier) {
+    return { ok: true, debug: getDebugState(), unchanged: true }
+  }
+
+  currentTargetTier = tier
+  recomputeWinners()
+  evaluateCurrentTierAcrossCards()
+  io.emit("state", serializeState())
+  return { ok: true, debug: getDebugState() }
 })
 
 fastify.post("/api/admin/reset-round", { preHandler: requireAdmin }, async () => {

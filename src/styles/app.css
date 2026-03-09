@@ -283,6 +283,7 @@ body.overlay-mode #root {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .row .input {
@@ -323,6 +324,11 @@ body.overlay-mode #root {
   background: rgba(30, 41, 59, 0.85);
   color: #e5e7eb;
   border-color: rgba(148, 163, 184, 0.32);
+}
+
+.btn.ghost.active {
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2) inset;
 }
 
 .btn.danger {

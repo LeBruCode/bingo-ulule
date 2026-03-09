@@ -165,6 +165,7 @@ return(
 <div className="player-head">
  <h1>Bingo Live</h1>
  <p>Campagne en direct</p>
+ <p>Palier en cours: {state?.phase?.targetLabel || "1 ligne"}</p>
  <span className="player-counter">{activeCount}/{card.length} cases actives</span>
 </div>
 

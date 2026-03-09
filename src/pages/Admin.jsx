@@ -23,6 +23,13 @@ export default function Admin() {
     [adminKey]
   )
 
+  const authOnlyHeaders = useMemo(
+    () => ({
+      "x-admin-key": adminKey
+    }),
+    [adminKey]
+  )
+
   const categories = useMemo(() => {
     const fromEvents = events.map((event) => event.category)
     const fromStorage = JSON.parse(localStorage.getItem("bingoCategories") || "[]")
@@ -39,6 +46,16 @@ export default function Admin() {
         const label = lineNumber === Number(debug?.rows) ? `Carton plein (${lineNumber} lignes)` : `${lineNumber} ligne${lineNumber > 1 ? "s" : ""}`
         return { key, label, count }
       })
+  }, [debug])
+
+  const tierControls = useMemo(() => {
+    const rows = Number(debug?.rows || 0)
+    if (!rows) return []
+    return Array.from({ length: rows }, (_, index) => {
+      const tier = index + 1
+      const label = tier === rows ? "Carton plein" : `${tier} ligne${tier > 1 ? "s" : ""}`
+      return { tier, label }
+    })
   }, [debug])
 
   const eventsByCategory = useMemo(() => {
@@ -197,7 +214,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/reload", {
         method: "POST",
-        headers: authHeaders
+        headers: authOnlyHeaders
       })
 
       if (!response.ok || !data.ok) {
@@ -219,7 +236,7 @@ export default function Admin() {
     try {
       const { response, data } = await fetchJson("/api/admin/reset-round", {
         method: "POST",
-        headers: authHeaders
+        headers: authOnlyHeaders
       })
 
       if (!response.ok || !data.ok) {
@@ -252,6 +269,29 @@ export default function Admin() {
 
       setStatus(`Format applique: ${data.board.rows}x${data.board.cols}`)
       await loadDashboard()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function chooseTargetTier(tier) {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const { response, data } = await fetchJson("/api/admin/target-tier", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ tier })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur palier: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setDebug(data.debug || null)
+      setStatus(`Palier en cours: ${data.debug?.targetLabel || `${tier} ligne(s)`}`)
     } finally {
       setLoading(false)
     }
@@ -293,6 +333,24 @@ export default function Admin() {
               Réinitialiser la manche
             </button>
           </div>
+          <div className="row">
+            {tierControls.map((tierItem) => (
+              <button
+                key={tierItem.tier}
+                className={`btn ghost ${debug?.targetTier === tierItem.tier ? "active" : ""}`}
+                onClick={() => chooseTargetTier(tierItem.tier)}
+                disabled={loading}
+              >
+                {tierItem.label}
+              </button>
+            ))}
+          </div>
+          {debug?.targetLabel ? (
+            <p className="hint">
+              Palier en cours: <strong>{debug.targetLabel}</strong>
+              {debug?.tierLocked ? " (gagnant trouvé, passe au palier suivant)" : ""}
+            </p>
+          ) : null}
           <div className="row">
             <input
               className="input"
