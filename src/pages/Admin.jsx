@@ -12,6 +12,12 @@ export default function Admin() {
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [tierLoading, setTierLoading] = useState(false)
+  const [raffleLoading, setRaffleLoading] = useState(false)
+  const [raffleEmail, setRaffleEmail] = useState("")
+  const [raffleEntries, setRaffleEntries] = useState([])
+  const [raffleWinner, setRaffleWinner] = useState(null)
+  const [rouletteIndex, setRouletteIndex] = useState(0)
+  const [rouletteSpinning, setRouletteSpinning] = useState(false)
   const [status, setStatus] = useState("")
 
   const categories = useMemo(() => {
@@ -112,6 +118,7 @@ export default function Admin() {
       setBoardRows(bootstrapCall.data.debug?.rows || 4)
       setBoardCols(bootstrapCall.data.debug?.cols || 5)
       setEvents(bootstrapCall.data.events?.events || [])
+      await loadRaffle(bootstrapCall.data.debug?.targetTier || 1)
       if (bootstrapCall.data.bootstrapping) {
         setStatus("Initialisation des cartes en cours...")
         setTimeout(() => {
@@ -298,9 +305,113 @@ export default function Admin() {
       }
 
       setDebug(data.debug || null)
+      await loadRaffle(tier)
       setStatus(`Palier en cours: ${data.debug?.targetLabel || `${tier} ligne(s)`}`)
     } finally {
       setTierLoading(false)
+    }
+  }
+
+  async function loadRaffle(tier = debug?.targetTier || 1) {
+    const { response, data } = await fetchJson(`/api/admin/raffle?tier=${tier}`)
+    if (!response.ok || !data.ok) return
+    setRaffleEntries(data.entries || [])
+    setRaffleWinner(data.winner || null)
+    setRouletteIndex(0)
+  }
+
+  async function addRaffleEntry() {
+    if (!raffleEmail.trim()) return
+    setRaffleLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/admin/raffle/enter", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier: debug?.targetTier || 1, email: raffleEmail.trim() })
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur préinscription: ${data.error || "unknown_error"}`)
+        return
+      }
+      setRaffleEmail("")
+      setRaffleEntries(data.raffle?.entries || [])
+      setRaffleWinner(data.raffle?.winner || null)
+      setStatus(data.duplicated ? "Email déjà préinscrit sur ce palier" : "Préinscription ajoutée")
+    } finally {
+      setRaffleLoading(false)
+    }
+  }
+
+  async function addMockEntries() {
+    setRaffleLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/admin/raffle/mock", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier: debug?.targetTier || 1, count: 25 })
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur mock: ${data.error || "unknown_error"}`)
+        return
+      }
+      setRaffleEntries(data.raffle?.entries || [])
+      setRaffleWinner(data.raffle?.winner || null)
+      setStatus(`${data.added || 0} faux préinscrits ajoutés`)
+    } finally {
+      setRaffleLoading(false)
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  async function animateRoulette(entries, winnerId) {
+    if (entries.length === 0) return
+    setRouletteSpinning(true)
+    let index = 0
+    for (let step = 0; step < 36; step++) {
+      index = (index + 1) % entries.length
+      setRouletteIndex(index)
+      await sleep(55 + step * 4)
+    }
+    const finalIndex = Math.max(
+      0,
+      entries.findIndex((entry) => entry.id === winnerId)
+    )
+    setRouletteIndex(finalIndex)
+    setRouletteSpinning(false)
+  }
+
+  async function drawRaffle() {
+    if (raffleEntries.length === 0) {
+      setStatus("Aucun préinscrit pour ce palier")
+      return
+    }
+    setRaffleLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/admin/raffle/draw", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier: debug?.targetTier || 1 })
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur tirage: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      const entries = data.raffle?.entries || []
+      setRaffleEntries(entries)
+      if (data.winner) {
+        await animateRoulette(entries, data.winner.id)
+      }
+      setRaffleWinner(data.raffle?.winner || data.winner || null)
+      setStatus("Tirage terminé")
+    } finally {
+      setRaffleLoading(false)
     }
   }
 
@@ -413,6 +524,52 @@ export default function Admin() {
         </section>
 
       </div>
+
+      <section className="panel">
+        <h2>Tirage au sort</h2>
+        <p className="hint">Palier actif: <strong>{debug?.targetLabel || "1 ligne"}</strong></p>
+        <div className="row">
+          <input
+            className="input"
+            type="email"
+            placeholder="email de contribution ulule"
+            value={raffleEmail}
+            onChange={(e) => setRaffleEmail(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addRaffleEntry()
+            }}
+          />
+          <button className="btn ghost" onClick={addRaffleEntry} disabled={raffleLoading}>
+            Ajouter
+          </button>
+          <button className="btn ghost" onClick={addMockEntries} disabled={raffleLoading}>
+            Ajouter 25 démos
+          </button>
+          <button className="btn" onClick={drawRaffle} disabled={raffleLoading || raffleEntries.length === 0}>
+            Lancer le tirage
+          </button>
+        </div>
+
+        <div className={`raffle-roulette ${rouletteSpinning ? "spinning" : ""}`}>
+          {raffleEntries.length === 0 ? (
+            <div className="raffle-empty">Aucun préinscrit pour ce palier</div>
+          ) : (
+            raffleEntries.slice(0, 80).map((entry, index) => (
+              <div
+                key={entry.id}
+                className={`raffle-item ${index === rouletteIndex ? "active" : ""} ${raffleWinner?.id === entry.id ? "winner" : ""}`}
+              >
+                {entry.email}
+              </div>
+            ))
+          )}
+        </div>
+
+        <p className="hint">Préinscrits: <strong>{raffleEntries.length}</strong></p>
+        {raffleWinner ? (
+          <p className="status">Gagnant tiré au sort: <strong>{raffleWinner.email}</strong></p>
+        ) : null}
+      </section>
 
       <section className="panel">
         <h2>Catégories</h2>

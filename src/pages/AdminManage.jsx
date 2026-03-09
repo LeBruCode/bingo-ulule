@@ -35,9 +35,7 @@ export default function AdminManage() {
     setStatus("")
 
     try {
-      const { response, data } = await fetchJson("/api/admin/events", {
-        headers: undefined
-      })
+      const { response, data } = await fetchJson("/api/admin/events")
 
       if (!response.ok) {
         if (response.status === 403) {

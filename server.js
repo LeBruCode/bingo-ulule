@@ -53,6 +53,10 @@ let triggeredSet = new Set()
 let winners = Array.from({ length: ROWS }, () => new Set())
 let rewardedTokens = new Set()
 let currentTargetTier = 1
+let raffleEntriesByTier = Array.from({ length: ROWS }, () => new Map())
+let raffleWinnerByTier = Array.from({ length: ROWS }, () => null)
+let raffleWonEmails = new Set()
+let raffleEntrySeq = 1
 let activationSequence = 0
 let activationLog = []
 let activationCountByEvent = new Map()
@@ -73,6 +77,13 @@ function boardSize() {
 
 function createWinnerTiers() {
   return Array.from({ length: ROWS }, () => new Set())
+}
+
+function createRaffleStore() {
+  return {
+    entriesByTier: Array.from({ length: ROWS }, () => new Map()),
+    winnerByTier: Array.from({ length: ROWS }, () => null)
+  }
 }
 
 function initCardProgress() {
@@ -285,6 +296,11 @@ function resetGameState() {
   winners = createWinnerTiers()
   rewardedTokens = new Set()
   currentTargetTier = 1
+  const raffleStore = createRaffleStore()
+  raffleEntriesByTier = raffleStore.entriesByTier
+  raffleWinnerByTier = raffleStore.winnerByTier
+  raffleWonEmails = new Set()
+  raffleEntrySeq = 1
   activationSequence = 0
   activationLog = []
   activationCountByEvent = new Map()
@@ -298,6 +314,11 @@ function clearRoundProgress() {
   winners = createWinnerTiers()
   rewardedTokens = new Set()
   currentTargetTier = 1
+  const raffleStore = createRaffleStore()
+  raffleEntriesByTier = raffleStore.entriesByTier
+  raffleWinnerByTier = raffleStore.winnerByTier
+  raffleWonEmails = new Set()
+  raffleEntrySeq = 1
   activationSequence = 0
   activationLog = []
   activationCountByEvent = new Map()
@@ -610,9 +631,81 @@ function getDebugState() {
     targetLabel:
       currentTargetTier === ROWS ? `Carton plein (${ROWS} lignes)` : `${currentTargetTier} ligne${currentTargetTier > 1 ? "s" : ""}`,
     tierLocked: (winners[currentTargetTier - 1]?.size || 0) > 0,
+    raffle: serializeRaffleSummary(),
     progressByLine: getProgressStatsByLine(),
     winners: serializeWinnerCounts()
   }
+}
+
+function normalizeRaffleEmail(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().toLowerCase()
+}
+
+function parseTierInput(rawTier) {
+  const tier = Number(rawTier || currentTargetTier)
+  if (!Number.isInteger(tier) || tier < 1 || tier > ROWS) return null
+  return tier
+}
+
+function serializeRaffleTier(tier) {
+  const tierIndex = tier - 1
+  const entriesMap = raffleEntriesByTier[tierIndex] || new Map()
+  const entries = [...entriesMap.values()].map((entry) => ({
+    id: entry.id,
+    email: entry.email,
+    source: entry.source,
+    createdAt: entry.createdAt
+  }))
+  const winner = raffleWinnerByTier[tierIndex]
+  return {
+    tier,
+    label: tier === ROWS ? `Carton plein (${tier} lignes)` : `${tier} ligne${tier > 1 ? "s" : ""}`,
+    entriesCount: entries.length,
+    entries,
+    winner
+  }
+}
+
+function serializeRaffleSummary() {
+  const byTier = {}
+  for (let tier = 1; tier <= ROWS; tier++) {
+    const tierData = serializeRaffleTier(tier)
+    byTier[`line_${tier}`] = {
+      entriesCount: tierData.entriesCount,
+      winner: tierData.winner
+    }
+  }
+  return {
+    currentTier: currentTargetTier,
+    byTier
+  }
+}
+
+function addRaffleEntry({ tier, email, source = "manual" }) {
+  const tierIndex = tier - 1
+  const entriesMap = raffleEntriesByTier[tierIndex]
+  const normalizedEmail = normalizeRaffleEmail(email)
+  if (!normalizedEmail) return { ok: false, error: "invalid_email" }
+
+  if (raffleWonEmails.has(normalizedEmail)) {
+    return { ok: false, error: "already_won" }
+  }
+
+  for (const existing of entriesMap.values()) {
+    if (existing.email === normalizedEmail) {
+      return { ok: true, duplicated: true, entry: existing }
+    }
+  }
+
+  const entry = {
+    id: `r${raffleEntrySeq++}`,
+    email: normalizedEmail,
+    source,
+    createdAt: new Date().toISOString()
+  }
+  entriesMap.set(entry.id, entry)
+  return { ok: true, entry }
 }
 
 function getProgressStatsByLine() {
@@ -802,6 +895,110 @@ fastify.post("/api/admin/target-tier", { preHandler: requireAdmin }, async (req,
   evaluateCurrentTierAcrossCards()
   io.emit("state", serializeState())
   return { ok: true, debug: getDebugState() }
+})
+
+fastify.get("/api/admin/raffle", { preHandler: requireAdmin }, async (req, reply) => {
+  const tier = parseTierInput(req.query?.tier)
+  if (!tier) {
+    reply.code(400)
+    return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
+  }
+  return { ok: true, ...serializeRaffleTier(tier) }
+})
+
+fastify.post("/api/admin/raffle/enter", { preHandler: requireAdmin }, async (req, reply) => {
+  const tier = parseTierInput(req.body?.tier)
+  if (!tier) {
+    reply.code(400)
+    return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
+  }
+
+  const outcome = addRaffleEntry({
+    tier,
+    email: req.body?.email,
+    source: "manual"
+  })
+
+  if (!outcome.ok) {
+    reply.code(400)
+    return outcome
+  }
+
+  return {
+    ok: true,
+    duplicated: Boolean(outcome.duplicated),
+    entry: outcome.entry,
+    raffle: serializeRaffleTier(tier)
+  }
+})
+
+fastify.post("/api/admin/raffle/mock", { preHandler: requireAdmin }, async (req, reply) => {
+  const tier = parseTierInput(req.body?.tier)
+  if (!tier) {
+    reply.code(400)
+    return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
+  }
+
+  const count = Number(req.body?.count || 10)
+  if (!Number.isInteger(count) || count < 1 || count > 200) {
+    reply.code(400)
+    return { ok: false, error: "invalid_count" }
+  }
+
+  let added = 0
+  let attempts = 0
+  while (added < count && attempts < count * 5) {
+    attempts += 1
+    const suffix = Math.floor(Math.random() * 1000000)
+    const fakeEmail = `testeur.${tier}.${suffix}@demo.local`
+    const outcome = addRaffleEntry({ tier, email: fakeEmail, source: "mock" })
+    if (outcome.ok && !outcome.duplicated) added += 1
+  }
+
+  return {
+    ok: true,
+    added,
+    raffle: serializeRaffleTier(tier)
+  }
+})
+
+fastify.post("/api/admin/raffle/draw", { preHandler: requireAdmin }, async (req, reply) => {
+  const tier = parseTierInput(req.body?.tier)
+  if (!tier) {
+    reply.code(400)
+    return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
+  }
+  const tierIndex = tier - 1
+  const entries = [...(raffleEntriesByTier[tierIndex] || new Map()).values()]
+  if (entries.length === 0) {
+    reply.code(400)
+    return { ok: false, error: "no_entries" }
+  }
+
+  if (raffleWinnerByTier[tierIndex]) {
+    return { ok: true, alreadyDrawn: true, raffle: serializeRaffleTier(tier) }
+  }
+
+  const eligible = entries.filter((entry) => !raffleWonEmails.has(entry.email))
+  if (eligible.length === 0) {
+    reply.code(400)
+    return { ok: false, error: "no_eligible_entries" }
+  }
+
+  const selected = eligible[Math.floor(Math.random() * eligible.length)]
+  const winner = {
+    id: selected.id,
+    email: selected.email,
+    selectedAt: new Date().toISOString()
+  }
+  raffleWinnerByTier[tierIndex] = winner
+  raffleWonEmails.add(selected.email)
+
+  return {
+    ok: true,
+    winner,
+    raffle: serializeRaffleTier(tier)
+  }
 })
 
 fastify.post("/api/admin/reset-round", { preHandler: requireAdmin }, async () => {
