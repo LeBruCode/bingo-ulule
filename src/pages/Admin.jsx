@@ -92,7 +92,7 @@ export default function Admin() {
           loadDashboard()
         }, 1200)
       } else {
-        setStatus("Dashboard charge")
+        setStatus("Tableau de bord chargé")
       }
     } finally {
       setLoading(false)
@@ -149,7 +149,7 @@ export default function Admin() {
             }
           : prev
       )
-      setStatus(event.triggered ? "Evenement desactive" : "Evenement active")
+      setStatus(event.triggered ? "Événement désactivé" : "Événement activé")
     } finally {
       setLoading(false)
     }
@@ -184,7 +184,7 @@ export default function Admin() {
             : item
         )
       )
-      setStatus(`Evenement deplace vers ${category}`)
+      setStatus(`Événement déplacé vers ${category}`)
     } finally {
       setLoading(false)
     }
@@ -205,7 +205,7 @@ export default function Admin() {
         return
       }
 
-      setStatus("Evenements recharges")
+      setStatus("Événements rechargés")
       await loadDashboard()
     } finally {
       setLoading(false)
@@ -227,7 +227,7 @@ export default function Admin() {
         return
       }
 
-      setStatus("Round reset")
+      setStatus("Manche réinitialisée")
       await loadDashboard()
     } finally {
       setLoading(false)
@@ -266,15 +266,15 @@ export default function Admin() {
     <div className="admin-shell">
       <div className="admin-header">
         <div>
-          <h1>Live Dashboard</h1>
-          <p>Clique un evenement pour l activer/desactiver. Glisse-depose entre categories.</p>
+          <h1>Tableau de bord live</h1>
+          <p>Clique un événement pour l activer/desactiver. Glisse-depose entre catégories.</p>
         </div>
         <div className="row">
           <button className="btn ghost" onClick={loadDashboard} disabled={loading}>
-            {loading ? "Chargement..." : "Rafraichir"}
+            {loading ? "Chargement..." : "Rafraîchir"}
           </button>
           <Link className="btn ghost" to="/admin/manage">
-            Vue edition
+            Vue édition
           </Link>
           <button className="btn ghost" onClick={logout}>
             Deconnexion
@@ -284,13 +284,13 @@ export default function Admin() {
 
       <div className="admin-grid">
         <section className="panel">
-          <h2>Round</h2>
+          <h2>Manche</h2>
           <div className="row">
             <button className="btn" onClick={reloadFromSupabase} disabled={loading}>
               Recharger
             </button>
             <button className="btn danger" onClick={resetRound} disabled={loading}>
-              Reset round
+              Réinitialiser la manche
             </button>
           </div>
           <div className="row">
@@ -317,12 +317,12 @@ export default function Admin() {
           {debug && (
             <>
               <div className="kpis">
-                <div><strong>{debug.events}</strong><span>events</span></div>
-                <div><strong>{debug.players}</strong><span>players</span></div>
-                <div><strong>{debug.triggered}</strong><span>triggered</span></div>
+                <div><strong>{debug.events}</strong><span>événements</span></div>
+                <div><strong>{debug.players}</strong><span>joueurs</span></div>
+                <div><strong>{debug.triggered}</strong><span>activés</span></div>
                 <div><strong>{debug.activationCount || 0}</strong><span>activations</span></div>
                 <div><strong>{debug.rows}x{debug.cols}</strong><span>grille</span></div>
-                <div><strong>{debug.gameVersion}</strong><span>game ver</span></div>
+                <div><strong>{debug.gameVersion}</strong><span>version de partie</span></div>
               </div>
               <div className="winner-grid">
                 {winnerTiers.map((tier) => (
@@ -336,17 +336,10 @@ export default function Admin() {
           )}
         </section>
 
-        <section className="panel">
-          <h2>Edition</h2>
-          <p className="hint">Creation de categories et edition des intitules dans la vue edition.</p>
-          <Link className="btn ghost" to="/admin/manage">
-            Ouvrir la vue edition
-          </Link>
-        </section>
       </div>
 
       <section className="panel">
-        <h2>Categories</h2>
+        <h2>Catégories</h2>
         <div className="category-stack">
           {categories.map((category) => (
             <section

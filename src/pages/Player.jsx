@@ -13,6 +13,7 @@ export default function Player(){
 
 const [card,setCard]=useState(null)
 const [state,setState]=useState(null)
+const [socketError,setSocketError]=useState("")
 const [freshCells,setFreshCells]=useState(new Set())
 const previousTriggeredRef = useRef(new Set())
 const vibrationTimeoutRef = useRef(null)
@@ -42,15 +43,28 @@ const onToken=(t)=>{
 
 const onCard=(nextCard)=>setCard(nextCard)
 const onState=(nextState)=>setState(nextState)
+const onError=(errorCode)=>{
+ if(errorCode==="no_cards_generated"){
+  setSocketError("Initialisation du bingo en cours, reessaie dans quelques secondes.")
+  return
+ }
+ if(typeof errorCode==="string"){
+  setSocketError(`Connexion: ${errorCode}`)
+  return
+ }
+ setSocketError("Connexion indisponible temporairement.")
+}
 
 socket.on("token",onToken)
 socket.on("card",onCard)
 socket.on("state",onState)
+socket.on("error",onError)
 
 return ()=>{
  socket.off("token",onToken)
  socket.off("card",onCard)
  socket.off("state",onState)
+ socket.off("error",onError)
  if(vibrationTimeoutRef.current){
   clearTimeout(vibrationTimeoutRef.current)
  }
@@ -100,7 +114,7 @@ if(!card) return (
  <div className="player-stage">
   <div className="player-head">
    <h1>Bingo Live</h1>
-   <p>Chargement de la carte…</p>
+   <p>{socketError || "Chargement de la carte..."}</p>
   </div>
  </div>
 </div>
@@ -156,14 +170,14 @@ return(
  {tierProgress.map(({tier,label,missing})=>(
   <div key={tier} className={"progress-item "+(missing===0?"done":"")}>
    <span>{label}</span>
-   <strong>{missing===0?"Pret":`Il manque ${missing} case${missing>1?"s":""}`}</strong>
+   <strong>{missing===0?"Prêt":`Il manque ${missing} case${missing>1?"s":""}`}</strong>
   </div>
  ))}
 </div>
 
 {wonTier && (
  <div className="winner-banner">
-  Tu as gagne le palier: <strong>{wonTier.label}</strong>
+  Tu as gagné le palier: <strong>{wonTier.label}</strong>
  </div>
 )}
 
@@ -177,7 +191,7 @@ return(
  <div key={i} className={"cell "+(active?"active":"")+(freshCells.has(i)?" fresh":"")}>
  <div className="cell-inner">
   <span className="cell-label">{c}</span>
-  {active && <span className="cell-badge">ACTIVE</span>}
+  {active && <span className="cell-badge">ACTIF</span>}
  </div>
  </div>
  )
@@ -204,7 +218,7 @@ return(
    return(
    <div key={absoluteIndex} className={"line-item "+(active?"active":"")+(fresh?" fresh":"")}>
     <span className="line-item-text">{eventName}</span>
-    {active && <span className="line-item-badge">ACTIVE</span>}
+    {active && <span className="line-item-badge">ACTIF</span>}
    </div>
    )
   })}

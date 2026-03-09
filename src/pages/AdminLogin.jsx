@@ -35,8 +35,8 @@ export default function AdminLogin() {
   return (
     <div className="login-shell">
       <div className="login-card">
-        <h1>Admin Login</h1>
-        <p>Accès sécurisé au dashboard bingo live.</p>
+        <h1>Connexion admin</h1>
+        <p>Accès sécurisé au tableau de bord du bingo live.</p>
         <input
           className="input"
           type="password"

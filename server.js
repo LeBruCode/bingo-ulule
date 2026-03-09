@@ -408,6 +408,10 @@ async function bootstrapGameData() {
     const ok = await loadEvents()
     isBootstrapped = Boolean(ok && cards.length > 0)
     bootstrapError = isBootstrapped ? null : "bootstrap_failed"
+    if (isBootstrapped) {
+      refreshConnectedPlayers()
+      io.emit("state", serializeState())
+    }
     return ok
   })().finally(() => {
     bootstrapPromise = null

@@ -58,7 +58,7 @@ export default function AdminManage() {
       const list = data.events || []
       list.sort((a, b) => a.name.localeCompare(b.name, "fr"))
       setEvents(list)
-      setStatus("Liste chargee")
+      setStatus("Liste chargée")
     } finally {
       setLoading(false)
     }
@@ -92,7 +92,7 @@ export default function AdminManage() {
 
     setNewCategoryName("")
     setNewEventCategory(normalized)
-    setStatus(`Categorie creee: ${normalized}`)
+    setStatus(`Catégorie créée: ${normalized}`)
     setEvents((prev) => [...prev])
   }
 
@@ -120,7 +120,7 @@ export default function AdminManage() {
 
       setNewEventName("")
       setNewEventMandatory(false)
-      setStatus("Evenement ajoute")
+      setStatus("Événement ajouté")
       await loadEvents()
     } finally {
       setLoading(false)
@@ -153,7 +153,7 @@ export default function AdminManage() {
       setEditingName("")
       setEditingCategory("general")
       setEditingMandatory(false)
-      setStatus("Evenement modifie")
+      setStatus("Événement modifié")
       await loadEvents()
     } finally {
       setLoading(false)
@@ -164,22 +164,22 @@ export default function AdminManage() {
     <div className="admin-shell">
       <div className="admin-header">
         <div>
-          <h1>Edition des evenements</h1>
-          <p>Ajoute, renomme et recategorise les evenements.</p>
+          <h1>Édition des événements</h1>
+          <p>Ajoute, renomme et recatégorise les événements.</p>
         </div>
         <div className="row">
           <Link className="btn ghost" to="/admin">
             Retour live
           </Link>
           <button className="btn ghost" onClick={loadEvents} disabled={loading}>
-            {loading ? "Chargement..." : "Rafraichir"}
+            {loading ? "Chargement..." : "Rafraîchir"}
           </button>
         </div>
       </div>
 
       <div className="admin-grid">
         <section className="panel">
-          <h2>Nouvelle categorie</h2>
+          <h2>Nouvelle catégorie</h2>
           <div className="row">
             <input
               className="input"
@@ -187,16 +187,16 @@ export default function AdminManage() {
               value={newCategoryName}
               onChange={(e) => setNewCategoryName(e.target.value)}
             />
-            <button className="btn" onClick={createCategory}>Creer</button>
+            <button className="btn" onClick={createCategory}>Créer</button>
           </div>
         </section>
 
         <section className="panel">
-          <h2>Ajouter un evenement</h2>
+          <h2>Ajouter un événement</h2>
           <div className="row">
             <input
               className="input"
-              placeholder="Nouvel intitule"
+              placeholder="Nouvel intitulé"
               value={newEventName}
               onChange={(e) => setNewEventName(e.target.value)}
             />
@@ -223,11 +223,11 @@ export default function AdminManage() {
       </div>
 
       <section className="panel">
-        <h2>Liste complete</h2>
+        <h2>Liste complète</h2>
         <div className="table">
           {events.map((event) => (
             <div key={event.id} className="table-row">
-              <span className={event.triggered ? "pill on" : "pill"}>{event.triggered ? "On" : "Off"}</span>
+              <span className={event.triggered ? "pill on" : "pill"}>{event.triggered ? "Actif" : "Inactif"}</span>
 
               {editingId === event.id ? (
                 <div className="row">
