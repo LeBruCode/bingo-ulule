@@ -8,6 +8,7 @@ export default function AdminRaffle() {
   const [entries, setEntries] = useState([])
   const [winner, setWinner] = useState(null)
   const [email, setEmail] = useState("")
+  const [ulule, setUlule] = useState(null)
   const [loading, setLoading] = useState(false)
   const [spinning, setSpinning] = useState(false)
   const [cursorIndex, setCursorIndex] = useState(0)
@@ -39,7 +40,14 @@ export default function AdminRaffle() {
       return null
     }
     setDebug(data)
+    setUlule(data?.ulule || null)
     return data
+  }
+
+  async function loadUluleStatus() {
+    const { response, data } = await fetchJson("/api/admin/ulule/status")
+    if (!response.ok || !data.ok) return
+    setUlule(data.ulule || null)
   }
 
   async function loadRaffle(nextTier) {
@@ -58,6 +66,7 @@ export default function AdminRaffle() {
       const nextTier = Number(nextDebug?.targetTier || 1)
       setTier(nextTier)
       await loadRaffle(nextTier)
+      await loadUluleStatus()
     } finally {
       setLoading(false)
     }
@@ -123,7 +132,7 @@ export default function AdminRaffle() {
       })
       if (!response.ok || !data.ok) {
         if (data.error === "not_ulule_eligible") {
-          setStatus("Email non éligible Ulule (contrepartie ou don >= 10€)")
+          setStatus(`Email non éligible Ulule (contrepartie ou don >= 10€). Prochaine synchro: ${data.nextSyncAt || "bientôt"}`)
           return
         }
         setStatus(`Erreur préinscription: ${data.error || "unknown_error"}`)
@@ -188,6 +197,46 @@ export default function AdminRaffle() {
     }
   }
 
+  async function syncUluleNow() {
+    setLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/admin/ulule/sync-now", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur sync Ulule: ${data?.result?.error || data?.error || "unknown_error"}`)
+        return
+      }
+      setUlule(data.ulule || null)
+      setStatus(`Sync Ulule OK (${data.result?.updatedOrders || 0} commandes mises à jour)`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function toggleUluleLiveMode(enabled) {
+    setLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/admin/ulule/live-mode", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled })
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur mode Ulule: ${data.error || "unknown_error"}`)
+        return
+      }
+      setUlule(data.ulule || null)
+      setStatus(enabled ? "Mode live Ulule activé (30s)" : "Mode live Ulule désactivé (10min)")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const tierButtons = Array.from({ length: Number(debug?.rows || 0) }, (_, i) => {
     const n = i + 1
     return {
@@ -223,6 +272,12 @@ export default function AdminRaffle() {
             <span>Événements tirés: <strong>{debug?.triggered || 0}</strong></span>
             <span>Joueurs: <strong>{debug?.players || 0}</strong></span>
           </div>
+        </div>
+        <div className="raffle-counts">
+          <span>Ulule: <strong>{ulule?.configured ? "connecté" : "non configuré"}</strong></span>
+          <span>Mode: <strong>{ulule?.liveMode ? "live 30s" : "idle 10min"}</strong></span>
+          <span>Cache: <strong>{ulule?.eligibleEmailsCached || 0} emails</strong></span>
+          <span>Dernière sync: <strong>{ulule?.lastSyncAt || "jamais"}</strong></span>
         </div>
 
         <div className="raffle-slot">
@@ -270,6 +325,16 @@ export default function AdminRaffle() {
             </button>
             <button className="btn ghost" onClick={addMockEntries} disabled={loading || spinning}>
               Charger démo
+            </button>
+            <button className="btn ghost" onClick={syncUluleNow} disabled={loading || spinning || !ulule?.configured}>
+              Sync Ulule maintenant
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => toggleUluleLiveMode(!ulule?.liveMode)}
+              disabled={loading || spinning || !ulule?.configured}
+            >
+              {ulule?.liveMode ? "Passer en 10min" : "Passer en 30s"}
             </button>
             <button className="btn" onClick={drawWinner} disabled={loading || spinning || entries.length === 0}>
               Lancer le tirage

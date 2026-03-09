@@ -71,9 +71,25 @@ const adminSessions = new Map()
 const ULULE_API_BASE = process.env.ULULE_API_BASE || "https://api.ulule.com/v1"
 const ULULE_API_KEY = process.env.ULULE_API_KEY || ""
 const ULULE_PROJECT_ID = process.env.ULULE_PROJECT_ID || ""
-const ULULE_MIN_CONTRIBUTION_CENTS = Number(process.env.ULULE_MIN_CONTRIBUTION_CENTS || 1000)
-const ULULE_EMAIL_CACHE_TTL_MS = Number(process.env.ULULE_EMAIL_CACHE_TTL_MS || 5 * 60 * 1000)
-const ululeEligibilityCache = new Map()
+const ULULE_MIN_CONTRIBUTION_CENTS = 1000
+const ULULE_LONG_CACHE_DAYS = 40
+const ULULE_DELTA_HOURS = 4
+const ULULE_SYNC_INTERVAL_LIVE_MS = 30000
+const ULULE_SYNC_INTERVAL_IDLE_MS = 10 * 60 * 1000
+const ULULE_SYNC_MAX_PAGES = 20
+const ULULE_SYNC_AUTO_LIVE = true
+let ululeEligibleByEmail = new Map()
+let ululeSyncTimer = null
+const ululeSyncState = {
+  liveMode: false,
+  inProgress: false,
+  lastSyncAt: null,
+  lastError: null,
+  lastDurationMs: 0,
+  nextRunAt: null,
+  lastReason: null,
+  updatedOrders: 0
+}
 let progressStatsCache = null
 let progressStatsDirty = true
 
@@ -637,6 +653,7 @@ function getDebugState() {
     targetLabel:
       currentTargetTier === ROWS ? `Carton plein (${ROWS} lignes)` : `${currentTargetTier} ligne${currentTargetTier > 1 ? "s" : ""}`,
     tierLocked: (winners[currentTargetTier - 1]?.size || 0) > 0,
+    ulule: getUluleStatus(),
     raffle: serializeRaffleSummary(),
     progressByLine: getProgressStatsByLine(),
     winners: serializeWinnerCounts()
@@ -646,6 +663,10 @@ function getDebugState() {
 function normalizeRaffleEmail(value) {
   if (typeof value !== "string") return ""
   return value.trim().toLowerCase()
+}
+
+function isUluleConfigured() {
+  return Boolean(ULULE_API_KEY && ULULE_PROJECT_ID)
 }
 
 function parseOrderTotalCents(order) {
@@ -670,24 +691,82 @@ function findOrderEmail(order) {
   return ""
 }
 
-function parseNextQueryFromMeta(meta) {
-  if (!meta?.next || typeof meta.next !== "string") return ""
-  return meta.next
+function parseOrderTimestampMs(order) {
+  const candidates = [
+    order?.payment_completed_at,
+    order?.payment_done_at,
+    order?.paid_at,
+    order?.updated_at,
+    order?.created_at
+  ]
+  for (const candidate of candidates) {
+    const value = Date.parse(String(candidate || ""))
+    if (Number.isFinite(value)) return value
+  }
+  return Date.now()
 }
 
-async function fetchUluleOrdersByStatus(status) {
-  const endpointBase = `${ULULE_API_BASE}/projects/${ULULE_PROJECT_ID}/orders`
-  let nextQuery = `?status=${encodeURIComponent(status)}&limit=20&show_anonymous=true`
-  const orders = []
+function parseNextLink(meta) {
+  const next = meta?.next
+  if (typeof next !== "string" || !next.trim()) return ""
+  return next.trim()
+}
 
-  for (let page = 0; page < 20 && nextQuery; page++) {
-    const response = await fetch(`${endpointBase}${nextQuery}`, {
+function buildUluleStatusUrl(status) {
+  return `${ULULE_API_BASE}/projects/${ULULE_PROJECT_ID}/orders?status=${encodeURIComponent(status)}&limit=20&show_anonymous=true`
+}
+
+function upsertUluleEligible(order, nowMs) {
+  const email = findOrderEmail(order)
+  if (!email) return false
+
+  const totalCents = parseOrderTotalCents(order)
+  const reward = hasOrderReward(order)
+  const eligible = reward || totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
+  if (!eligible) return false
+
+  const orderTime = parseOrderTimestampMs(order)
+  const existing = ululeEligibleByEmail.get(email)
+  const next = existing
+    ? {
+        ...existing,
+        hasReward: existing.hasReward || reward,
+        maxTotalCents: Math.max(existing.maxTotalCents || 0, totalCents),
+        lastSeenMs: Math.max(existing.lastSeenMs || 0, orderTime),
+        updatedAtMs: nowMs
+      }
+    : {
+        email,
+        hasReward: reward,
+        maxTotalCents: totalCents,
+        lastSeenMs: orderTime,
+        updatedAtMs: nowMs
+      }
+  ululeEligibleByEmail.set(email, next)
+  return true
+}
+
+function pruneUluleEligibilityCache(nowMs) {
+  const minSeenMs = nowMs - ULULE_LONG_CACHE_DAYS * 24 * 60 * 60 * 1000
+  for (const [email, row] of ululeEligibleByEmail.entries()) {
+    if ((row.lastSeenMs || 0) < minSeenMs) {
+      ululeEligibleByEmail.delete(email)
+    }
+  }
+}
+
+async function fetchUluleOrdersByStatus(status, sinceMs) {
+  const endpointBase = `${ULULE_API_BASE}/projects/${ULULE_PROJECT_ID}/orders`
+  const orders = []
+  let url = buildUluleStatusUrl(status)
+
+  for (let page = 0; page < ULULE_SYNC_MAX_PAGES && url; page++) {
+    const response = await fetch(url, {
       headers: {
         Authorization: `APIKey ${ULULE_API_KEY}`,
         Accept: "application/json"
       }
     })
-
     if (!response.ok) {
       throw new Error(`ulule_${response.status}`)
     }
@@ -695,52 +774,121 @@ async function fetchUluleOrdersByStatus(status) {
     const payload = await response.json().catch(() => ({}))
     const pageOrders = Array.isArray(payload?.orders) ? payload.orders : []
     orders.push(...pageOrders)
-    nextQuery = parseNextQueryFromMeta(payload?.meta)
+
+    const hasRecentOrder = pageOrders.some((order) => parseOrderTimestampMs(order) >= sinceMs)
+    if (!hasRecentOrder) break
+
+    const next = parseNextLink(payload?.meta)
+    if (!next) break
+    if (next.startsWith("http://") || next.startsWith("https://")) {
+      url = next
+    } else if (next.startsWith("?")) {
+      url = `${endpointBase}${next}`
+    } else if (next.startsWith("/")) {
+      url = `${ULULE_API_BASE}${next}`
+    } else {
+      url = `${endpointBase}${next}`
+    }
   }
 
   return orders
 }
 
-async function checkUluleEligibility(email) {
-  const normalizedEmail = normalizeRaffleEmail(email)
-  if (!normalizedEmail) return { ok: false, error: "invalid_email" }
-  if (!ULULE_API_KEY || !ULULE_PROJECT_ID) return { ok: false, error: "ulule_not_configured" }
+function shouldUseLiveUluleInterval() {
+  if (ululeSyncState.liveMode) return true
+  if (!ULULE_SYNC_AUTO_LIVE) return false
+  return triggered.length > 0 || activationSequence > 0
+}
 
-  const cached = ululeEligibilityCache.get(normalizedEmail)
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.value
-  }
+function currentUluleIntervalMs() {
+  return shouldUseLiveUluleInterval() ? ULULE_SYNC_INTERVAL_LIVE_MS : ULULE_SYNC_INTERVAL_IDLE_MS
+}
 
+function scheduleUluleSync(delayMs = currentUluleIntervalMs()) {
+  if (!isUluleConfigured()) return
+  if (ululeSyncTimer) clearTimeout(ululeSyncTimer)
+  ululeSyncState.nextRunAt = new Date(Date.now() + delayMs).toISOString()
+  ululeSyncTimer = setTimeout(async () => {
+    await syncUluleDelta({ reason: "scheduled" })
+    scheduleUluleSync(currentUluleIntervalMs())
+  }, delayMs)
+}
+
+async function syncUluleDelta({ reason = "manual" } = {}) {
+  if (!isUluleConfigured()) return { ok: false, error: "ulule_not_configured" }
+  if (ululeSyncState.inProgress) return { ok: false, error: "sync_in_progress" }
+
+  ululeSyncState.inProgress = true
+  ululeSyncState.lastReason = reason
+  const startedAtMs = Date.now()
+  const sinceMs = startedAtMs - ULULE_DELTA_HOURS * 60 * 60 * 1000
+  let updatedOrders = 0
   try {
     const [doneOrders, completedOrders] = await Promise.all([
-      fetchUluleOrdersByStatus("payment-done"),
-      fetchUluleOrdersByStatus("payment-completed")
+      fetchUluleOrdersByStatus("payment-done", sinceMs),
+      fetchUluleOrdersByStatus("payment-completed", sinceMs)
     ])
-    const allOrders = [...doneOrders, ...completedOrders]
-    const matchingOrders = allOrders.filter((order) => findOrderEmail(order) === normalizedEmail)
 
-    const qualifyingOrder = matchingOrders.find((order) => {
-      const totalCents = parseOrderTotalCents(order)
-      return hasOrderReward(order) || totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
-    })
+    const recentOrders = [...doneOrders, ...completedOrders].filter((order) => parseOrderTimestampMs(order) >= sinceMs)
+    for (const order of recentOrders) {
+      if (upsertUluleEligible(order, startedAtMs)) {
+        updatedOrders += 1
+      }
+    }
 
-    const result = qualifyingOrder
-      ? {
-          ok: true,
-          eligible: true,
-          hasReward: hasOrderReward(qualifyingOrder),
-          orderTotalCents: parseOrderTotalCents(qualifyingOrder)
-        }
-      : { ok: true, eligible: false }
-
-    ululeEligibilityCache.set(normalizedEmail, {
-      value: result,
-      expiresAt: Date.now() + ULULE_EMAIL_CACHE_TTL_MS
-    })
-    return result
+    pruneUluleEligibilityCache(startedAtMs)
+    ululeSyncState.lastSyncAt = new Date(startedAtMs).toISOString()
+    ululeSyncState.lastError = null
+    ululeSyncState.updatedOrders = updatedOrders
+    ululeSyncState.lastDurationMs = Date.now() - startedAtMs
+    return { ok: true, updatedOrders, scannedOrders: recentOrders.length }
   } catch (error) {
-    fastify.log.error({ error, email: normalizedEmail }, "Ulule eligibility check failed")
-    return { ok: false, error: "ulule_check_failed" }
+    ululeSyncState.lastError = String(error?.message || error)
+    ululeSyncState.lastDurationMs = Date.now() - startedAtMs
+    fastify.log.error({ error }, "Ulule delta sync failed")
+    return { ok: false, error: "ulule_sync_failed" }
+  } finally {
+    ululeSyncState.inProgress = false
+  }
+}
+
+function getUluleStatus() {
+  return {
+    configured: isUluleConfigured(),
+    liveMode: ululeSyncState.liveMode,
+    autoLive: ULULE_SYNC_AUTO_LIVE,
+    intervalLiveMs: ULULE_SYNC_INTERVAL_LIVE_MS,
+    intervalIdleMs: ULULE_SYNC_INTERVAL_IDLE_MS,
+    effectiveIntervalMs: currentUluleIntervalMs(),
+    deltaHours: ULULE_DELTA_HOURS,
+    longCacheDays: ULULE_LONG_CACHE_DAYS,
+    minContributionCents: ULULE_MIN_CONTRIBUTION_CENTS,
+    eligibleEmailsCached: ululeEligibleByEmail.size,
+    inProgress: ululeSyncState.inProgress,
+    lastSyncAt: ululeSyncState.lastSyncAt,
+    lastDurationMs: ululeSyncState.lastDurationMs,
+    lastReason: ululeSyncState.lastReason,
+    lastError: ululeSyncState.lastError,
+    updatedOrders: ululeSyncState.updatedOrders,
+    nextRunAt: ululeSyncState.nextRunAt
+  }
+}
+
+function checkUluleEligibility(email) {
+  const normalizedEmail = normalizeRaffleEmail(email)
+  if (!normalizedEmail) return { ok: false, error: "invalid_email" }
+  if (!isUluleConfigured()) return { ok: false, error: "ulule_not_configured" }
+
+  const cached = ululeEligibleByEmail.get(normalizedEmail)
+  if (!cached) return { ok: true, eligible: false }
+
+  return {
+    ok: true,
+    eligible: true,
+    hasReward: Boolean(cached.hasReward),
+    orderTotalCents: Number(cached.maxTotalCents || 0),
+    lastSeenAt: new Date(cached.lastSeenMs || Date.now()).toISOString(),
+    cacheSource: "ulule_delta_cache"
   }
 }
 
@@ -864,6 +1012,30 @@ function serializeAdminEvents() {
 
 fastify.get("/api/admin/debug", { preHandler: requireAdmin }, async () => {
   return getDebugState()
+})
+
+fastify.get("/api/admin/ulule/status", { preHandler: requireAdmin }, async () => {
+  return { ok: true, ulule: getUluleStatus() }
+})
+
+fastify.post("/api/admin/ulule/live-mode", { preHandler: requireAdmin }, async (req, reply) => {
+  if (typeof req.body?.enabled !== "boolean") {
+    reply.code(400)
+    return { ok: false, error: "invalid_enabled" }
+  }
+  ululeSyncState.liveMode = req.body.enabled
+  scheduleUluleSync(250)
+  return { ok: true, ulule: getUluleStatus() }
+})
+
+fastify.post("/api/admin/ulule/sync-now", { preHandler: requireAdmin }, async () => {
+  const result = await syncUluleDelta({ reason: "manual" })
+  scheduleUluleSync(currentUluleIntervalMs())
+  return {
+    ok: Boolean(result.ok),
+    result,
+    ulule: getUluleStatus()
+  }
 })
 
 fastify.get("/api/admin/events", { preHandler: requireAdmin }, async () => {
@@ -1024,7 +1196,7 @@ fastify.post("/api/admin/raffle/enter", { preHandler: requireAdmin }, async (req
   }
   if (!ululeCheck.eligible) {
     reply.code(400)
-    return { ok: false, error: "not_ulule_eligible" }
+    return { ok: false, error: "not_ulule_eligible", nextSyncAt: ululeSyncState.nextRunAt }
   }
 
   const outcome = addRaffleEntry({
@@ -1318,6 +1490,12 @@ const start = async () => {
 
     // Non-blocking boot to reduce cold-start wait on first HTTP response.
     bootstrapGameData()
+    if (isUluleConfigured()) {
+      scheduleUluleSync(1000)
+      syncUluleDelta({ reason: "startup" })
+    } else {
+      fastify.log.warn("Ulule sync disabled: ULULE_API_KEY or ULULE_PROJECT_ID missing")
+    }
   } catch (err) {
     fastify.log.error(err)
     process.exit(1)

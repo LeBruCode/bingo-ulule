@@ -438,6 +438,9 @@ export default function Admin() {
           <button className="btn ghost" onClick={loadDashboard} disabled={loading}>
             {loading ? "Chargement..." : "Rafraîchir"}
           </button>
+          <Link className="btn ghost" to="/admin/raffle">
+            Vue tirage
+          </Link>
           <Link className="btn ghost" to="/admin/manage">
             Vue édition
           </Link>
