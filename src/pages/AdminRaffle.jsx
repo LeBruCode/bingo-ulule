@@ -102,9 +102,11 @@ export default function AdminRaffle({ projectionOnly = false }) {
     setRafflePhase(nextWinner ? "winner" : "idle")
     setCountdownValue(null)
     if (nextWinner?.id) {
-      const winnerEntry = nextEntries.find((entry) => entry.id === nextWinner.id) || nextWinner
-      setStageEntries(winnerEntry ? [winnerEntry] : [])
-      setFocusEntry(winnerEntry || null)
+      const winnerEntries = nextWinners
+        .map((winner) => nextEntries.find((entry) => entry.id === winner.id) || winner)
+        .filter(Boolean)
+      setStageEntries(winnerEntries)
+      setFocusEntry(winnerEntries[winnerEntries.length - 1] || null)
     } else {
       setStageEntries([])
       setFocusEntry(null)
@@ -177,42 +179,46 @@ export default function AdminRaffle({ projectionOnly = false }) {
     return next
   }
 
-  function buildStagePool(entriesList, winnerId) {
+  function buildStagePool(entriesList, winnerIds) {
     if (entriesList.length <= 1) return entriesList
-    const winnerEntry = entriesList.find((entry) => entry.id === winnerId)
-    const others = shuffleList(entriesList.filter((entry) => entry.id !== winnerId))
+    const winnerIdSet = new Set(Array.isArray(winnerIds) ? winnerIds : [])
+    const winnerEntries = entriesList.filter((entry) => winnerIdSet.has(entry.id))
+    const others = shuffleList(entriesList.filter((entry) => !winnerIdSet.has(entry.id)))
     const limit = Math.min(entriesList.length, 40)
-    const selected = winnerEntry ? [winnerEntry, ...others.slice(0, Math.max(0, limit - 1))] : others.slice(0, limit)
+    const selected = winnerEntries.length > 0
+      ? [...winnerEntries, ...others.slice(0, Math.max(0, limit - winnerEntries.length))]
+      : others.slice(0, limit)
     return shuffleList(selected)
   }
 
-  async function animateDraw(entriesList, winnerEntry) {
-    if (!winnerEntry || entriesList.length === 0) return
-    const winnerId = winnerEntry.id
-    let pool = buildStagePool(entriesList, winnerId)
+  async function animateDraw(entriesList, winnerEntries) {
+    if (!Array.isArray(winnerEntries) || winnerEntries.length === 0 || entriesList.length === 0) return
+    const winnerIds = winnerEntries.map((entry) => entry.id)
+    const winnerIdSet = new Set(winnerIds)
+    let pool = buildStagePool(entriesList, winnerIds)
     setSpinning(true)
     setWinners([])
     setRafflePhase("elimination")
     setStageEntries(pool)
     setFocusEntry(null)
 
-    if (pool.length === 1) {
+    if (pool.length <= winnerEntries.length) {
       await sleep(1200)
-      setFocusEntry(winnerEntry)
+      setFocusEntry(winnerEntries[winnerEntries.length - 1] || null)
       setRafflePhase("winner")
-      setWinners([winnerEntry])
+      setWinners(winnerEntries)
       setSpinning(false)
       return
     }
 
-    const finalistTarget = Math.min(5, pool.length)
+    const finalistTarget = Math.max(winnerEntries.length, Math.min(Math.max(5, winnerEntries.length), pool.length))
     const earlyEliminations = Math.max(0, pool.length - finalistTarget)
-    const finalEliminations = Math.max(0, finalistTarget - 1)
+    const finalEliminations = Math.max(0, finalistTarget - winnerEntries.length)
     const earlyDelay = earlyEliminations > 0 ? 11000 / earlyEliminations : 0
     const finalDelay = finalEliminations > 0 ? 4500 / finalEliminations : 0
 
     while (pool.length > finalistTarget) {
-      const removable = pool.filter((entry) => entry.id !== winnerId)
+      const removable = pool.filter((entry) => !winnerIdSet.has(entry.id))
       const removed = removable[Math.floor(Math.random() * removable.length)]
       pool = pool.filter((entry) => entry.id !== removed.id)
       setStageEntries(pool)
@@ -224,8 +230,8 @@ export default function AdminRaffle({ projectionOnly = false }) {
     setFocusEntry(pool[Math.floor(Math.random() * pool.length)] || null)
     await sleep(1400)
 
-    while (pool.length > 1) {
-      const removable = pool.filter((entry) => entry.id !== winnerId)
+    while (pool.length > winnerEntries.length) {
+      const removable = pool.filter((entry) => !winnerIdSet.has(entry.id))
       const removed = removable[Math.floor(Math.random() * removable.length)]
       pool = pool.filter((entry) => entry.id !== removed.id)
       setStageEntries(pool)
@@ -234,9 +240,9 @@ export default function AdminRaffle({ projectionOnly = false }) {
     }
 
     setStageEntries(pool)
-    setFocusEntry(winnerEntry)
+    setFocusEntry(winnerEntries[winnerEntries.length - 1] || null)
     setRafflePhase("winner")
-    setWinners([winnerEntry])
+    setWinners(winnerEntries)
     setSpinning(false)
   }
 
@@ -273,10 +279,11 @@ export default function AdminRaffle({ projectionOnly = false }) {
       const nextEntries = data.raffle?.entries || entries
       setEntries(nextEntries)
       if (data.winners?.length) {
-        const featuredWinner = data.winners[data.winners.length - 1]
-        const winnerEntry = nextEntries.find((entry) => entry.id === featuredWinner.id) || data.raffle?.winner || featuredWinner
+        const nextWinnerEntries = data.winners.map((winner) =>
+          nextEntries.find((entry) => entry.id === winner.id) || winner
+        )
         await runCountdown()
-        await animateDraw(nextEntries, winnerEntry)
+        await animateDraw(nextEntries, nextWinnerEntries)
       }
       setWinners(data.raffle?.winners || data.winners || [])
       setStatus(`Tirage terminé: ${data.raffle?.winnersCount || data.winners?.length || 0} gagnant(s)`)
