@@ -94,6 +94,7 @@ let progressStatsCache = null
 let progressStatsDirty = true
 let campaignEndAtMs = Number.isFinite(Date.parse(process.env.CAMPAIGN_END_AT || "")) ? Date.parse(process.env.CAMPAIGN_END_AT) : null
 let liveStreamUrl = typeof process.env.LIVE_STREAM_URL === "string" ? process.env.LIVE_STREAM_URL.trim() : ""
+let ululePageUrl = typeof process.env.ULULE_PAGE_URL === "string" ? process.env.ULULE_PAGE_URL.trim() : ""
 let gameEnded = false
 let runtimeStateStorageReady = false
 let pendingRuntimeState = null
@@ -114,7 +115,10 @@ const DEFAULT_TEXT_CONTENT = {
   "player.countdown_minutes": "Minutes",
   "player.countdown_seconds": "Secondes",
   "player.join_live_button": "Rejoindre le live YouTube",
+  "player.join_ulule_button": "Voir la page Ulule",
+  "player.live_message": "",
   "player.raffle_button": "Participer au tirage au sort",
+  "player.current_reward_label": "A gagner",
   "player.progress_ready": "Eligible au tirage",
   "player.progress_closed": "Tirage termine",
   "player.progress_waiting_round": "En attente de cette manche",
@@ -141,7 +145,15 @@ const DEFAULT_TEXT_CONTENT = {
   "overlay.tier_done": "Gagne",
   "overlay.tier_pending": "En attente",
   "overlay.next_tier": "Prochain palier : {label}",
-  "overlay.all_done": "Tous les paliers sont gagnes"
+  "overlay.all_done": "Tous les paliers sont gagnes",
+  "reward.line_1": "",
+  "reward.line_2": "",
+  "reward.line_3": "",
+  "reward.line_4": "",
+  "reward.line_5": "",
+  "reward.line_6": "",
+  "reward.line_7": "",
+  "reward.line_8": ""
 }
 let editableContent = { ...DEFAULT_TEXT_CONTENT }
 let contentStorageReady = false
@@ -352,7 +364,8 @@ function serializeCampaign() {
 
 function serializeLiveStream() {
   return {
-    url: liveStreamUrl || null
+    url: liveStreamUrl || null,
+    ululeUrl: ululePageUrl || null
   }
 }
 
@@ -423,6 +436,7 @@ function serializeRuntimeState() {
     cards,
     campaignEndAtMs,
     liveStreamUrl,
+    ululePageUrl,
     gameEnded,
     currentTargetTier,
     winners: winners.map((set) => [...set]),
@@ -582,6 +596,7 @@ async function loadRuntimeState() {
 
   campaignEndAtMs = Number.isFinite(Number(stateValue.campaignEndAtMs)) ? Number(stateValue.campaignEndAtMs) : null
   liveStreamUrl = typeof stateValue.liveStreamUrl === "string" ? stateValue.liveStreamUrl.trim() : ""
+  ululePageUrl = typeof stateValue.ululePageUrl === "string" ? stateValue.ululePageUrl.trim() : ""
   gameEnded = Boolean(stateValue.gameEnded)
 
   return true
@@ -1678,25 +1693,41 @@ fastify.patch("/api/backend-bruno/campaign-end", { preHandler: requireAdmin }, a
 
 fastify.patch("/api/backend-bruno/live-stream", { preHandler: requireAdmin }, async (req, reply) => {
   const url = req.body?.url
-  if (url === null || url === "") {
+  const ululeUrl = req.body?.ululeUrl
+
+  if ((url === null || url === "") && (ululeUrl === undefined || ululeUrl === null || ululeUrl === "")) {
     liveStreamUrl = ""
+    ululePageUrl = ""
     await saveRuntimeState()
     io.emit("state", serializeState())
     return { ok: true, liveStream: serializeLiveStream() }
   }
 
-  if (typeof url !== "string") {
+  if (url !== undefined && url !== null && typeof url !== "string") {
     reply.code(400)
     return { ok: false, error: "invalid_url" }
   }
 
-  const normalized = url.trim()
-  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+  if (ululeUrl !== undefined && ululeUrl !== null && typeof ululeUrl !== "string") {
+    reply.code(400)
+    return { ok: false, error: "invalid_ulule_url" }
+  }
+
+  const normalized = typeof url === "string" ? url.trim() : liveStreamUrl
+  const normalizedUlule = typeof ululeUrl === "string" ? ululeUrl.trim() : ululePageUrl
+
+  if (normalized && !normalized.startsWith("http://") && !normalized.startsWith("https://")) {
     reply.code(400)
     return { ok: false, error: "invalid_url" }
+  }
+
+  if (normalizedUlule && !normalizedUlule.startsWith("http://") && !normalizedUlule.startsWith("https://")) {
+    reply.code(400)
+    return { ok: false, error: "invalid_ulule_url" }
   }
 
   liveStreamUrl = normalized
+  ululePageUrl = normalizedUlule
   await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true, liveStream: serializeLiveStream() }

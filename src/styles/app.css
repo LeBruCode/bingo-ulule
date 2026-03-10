@@ -255,6 +255,15 @@ body.overlay-mode #root {
   letter-spacing: 0.18em;
 }
 
+.countdown-live-message {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  color: #dbeafe;
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
 
 .player-counter {
   width: fit-content;
@@ -367,6 +376,32 @@ body.overlay-mode #root {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
+}
+
+.current-reward-banner {
+  margin-bottom: 14px;
+  border: 1px solid rgba(251, 191, 36, 0.34);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top left, rgba(251, 191, 36, 0.16), transparent 38%),
+    rgba(15, 23, 42, 0.72);
+  padding: 14px 16px;
+  display: grid;
+  gap: 6px;
+}
+
+.current-reward-banner span {
+  color: #fde68a;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.current-reward-banner strong {
+  color: #f8fafc;
+  font-size: 1rem;
+  line-height: 1.35;
 }
 
 .progress-item {
@@ -1783,7 +1818,7 @@ body.overlay-mode #root {
     justify-content: space-between;
     margin-bottom: 6px;
     color: #cbd5e1;
-    font-size: 1rem;
+    font-size: 1.08rem;
   }
 
   .line-head span {
@@ -1804,16 +1839,16 @@ body.overlay-mode #root {
     justify-content: space-between;
     gap: 8px;
     border: 1px solid rgba(148, 163, 184, 0.25);
-    border-radius: 12px;
-    padding: 11px 12px;
+    border-radius: 14px;
+    padding: 13px 14px;
     background: rgba(31, 41, 55, 0.84);
   }
 
   .line-item-text {
     color: #e5e7eb;
-    font-size: 1.04rem;
-    line-height: 1.34;
-    font-weight: 600;
+    font-size: 1.16rem;
+    line-height: 1.36;
+    font-weight: 700;
     text-align: left;
   }
 
@@ -1823,7 +1858,7 @@ body.overlay-mode #root {
     background: rgba(255, 255, 255, 0.16);
     color: #ecfeff;
     padding: 2px 7px;
-    font-size: 0.66rem;
+    font-size: 0.72rem;
     font-weight: 800;
     letter-spacing: 0.06em;
     flex-shrink: 0;
@@ -1922,12 +1957,12 @@ body.overlay-mode #root {
   }
 
   .line-item-text {
-    font-size: 0.96rem;
-    line-height: 1.3;
+    font-size: 1.04rem;
+    line-height: 1.32;
   }
 
   .line-item-badge {
-    font-size: 0.58rem;
+    font-size: 0.64rem;
     padding: 2px 6px;
   }
 }

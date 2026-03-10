@@ -165,6 +165,7 @@ const tierProgress = Array.from({length:boardRows},(_,index)=>{
 })
 const currentTargetTier = Number(state?.phase?.targetTier || 1)
 const currentTierProgress = tierProgress.find(({tier})=>tier===currentTargetTier) || null
+const currentReward = typeof content[`reward.line_${currentTargetTier}`]==="string" ? content[`reward.line_${currentTargetTier}`].trim() : ""
 
 function winnerTokensForTier(tier){
  const byLine = state?.winners?.byLine
@@ -181,7 +182,9 @@ const campaignEndAtMs = state?.campaign?.endAt ? Date.parse(state.campaign.endAt
 const campaignRemainingMs = campaignEndAtMs ? Math.max(0,campaignEndAtMs - nowMs) : null
 const countdownParts = campaignRemainingMs && campaignRemainingMs > 0 ? splitRemaining(campaignRemainingMs) : null
 const liveStreamUrl = state?.liveStream?.url || ""
+const ululePageUrl = state?.liveStream?.ululeUrl || ""
 const gameEnded = Boolean(state?.game?.ended)
+const liveMessage = typeof content["player.live_message"]==="string" ? content["player.live_message"].trim() : ""
 
 function parseYouTubeVideoId(rawUrl){
  if(typeof rawUrl!=="string" || !rawUrl.trim()) return ""
@@ -230,6 +233,12 @@ function openLiveLink(){
  if(!opened){
   window.open(liveStreamUrl,"_blank","noopener,noreferrer")
  }
+}
+
+function openUluleLink(){
+ if(!ululePageUrl) return
+ if(typeof window==="undefined") return
+ window.open(ululePageUrl,"_blank","noopener,noreferrer")
 }
 
 function formatRemaining(ms){
@@ -393,6 +402,7 @@ return(
       <div className="countdown-cell"><strong>{String(countdownParts?.seconds ?? 0).padStart(2,"0")}</strong><span>{t("player.countdown_seconds","Secondes")}</span></div>
      </div>
     )}
+    {liveMessage ? <p className="countdown-live-message">{liveMessage}</p> : null}
    </div>
   )}
  </div>
@@ -400,7 +410,12 @@ return(
  <div className="player-actions">
   {liveStreamUrl && (
    <button className="btn ghost raffle-cta player-live-link" onClick={openLiveLink}>
-    {t("player.join_live_button","Rejoindre le live YouTube")}
+   {t("player.join_live_button","Rejoindre le live YouTube")}
+   </button>
+  )}
+  {ululePageUrl && (
+   <button className="btn ghost raffle-cta player-live-link" onClick={openUluleLink}>
+    {t("player.join_ulule_button","Voir la page Ulule")}
    </button>
   )}
    {isQualifiedForCurrentTier && currentTierProgress && (
@@ -419,6 +434,12 @@ return(
  </section>
 ) : (
 <>
+{currentReward ? (
+ <div className="current-reward-banner">
+  <span>{t("player.current_reward_label","A gagner")}</span>
+  <strong>{currentReward}</strong>
+ </div>
+) : null}
 <div className="player-progress">
   {tierProgress.map(({tier,label,missing})=>(
   <div key={tier} className={"progress-item "+(missing===0?"done":"")+(tier===currentTargetTier?" current":"")}>

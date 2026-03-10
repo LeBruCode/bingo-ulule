@@ -13,6 +13,9 @@ export default function Admin() {
   const [boardCols, setBoardCols] = useState(5)
   const [campaignEndInput, setCampaignEndInput] = useState("")
   const [liveStreamInput, setLiveStreamInput] = useState("")
+  const [ululePageInput, setUlulePageInput] = useState("")
+  const [liveMessage, setLiveMessage] = useState("")
+  const [tierRewards, setTierRewards] = useState({})
   const [events, setEvents] = useState([])
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -106,6 +109,7 @@ export default function Admin() {
 
     try {
       const bootstrapCall = await fetchJson("/api/backend-bruno/bootstrap")
+      const contentCall = await fetchJson("/api/backend-bruno/content")
 
       if (!bootstrapCall.response.ok) {
         if (bootstrapCall.response.status === 403) {
@@ -122,9 +126,14 @@ export default function Admin() {
       const campaignEndAt = bootstrapCall.data.debug?.campaign?.endAt
       setCampaignEndInput(campaignEndAt ? toLocalDateTimeInput(campaignEndAt) : "")
       setLiveStreamInput(bootstrapCall.data.debug?.liveStream?.url || "")
+      setUlulePageInput(bootstrapCall.data.debug?.liveStream?.ululeUrl || "")
       setBoardRows(bootstrapCall.data.debug?.rows || 4)
       setBoardCols(bootstrapCall.data.debug?.cols || 5)
       setEvents(bootstrapCall.data.events?.events || [])
+      if (contentCall.response.ok) {
+        setTierRewards(contentCall.data.content || {})
+        setLiveMessage(contentCall.data.content?.["player.live_message"] || "")
+      }
       await loadRaffle(bootstrapCall.data.debug?.targetTier || 1)
       if (bootstrapCall.data.bootstrapping) {
         setStatus("Initialisation des cartes en cours...")
@@ -366,7 +375,10 @@ export default function Admin() {
       const { response, data } = await fetchJson("/api/backend-bruno/live-stream", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: liveStreamInput.trim() || null })
+        body: JSON.stringify({
+          url: liveStreamInput.trim() || null,
+          ululeUrl: ululePageInput.trim() || null
+        })
       })
 
       if (!response.ok || !data.ok) {
@@ -383,6 +395,69 @@ export default function Admin() {
           : prev
       )
       setStatus(data.liveStream?.url ? "URL du live enregistrée" : "URL du live supprimée")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function saveLiveMessage() {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/content", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          entries: [
+            {
+              key: "player.live_message",
+              value: liveMessage
+            }
+          ]
+        })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur message live: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setLiveMessage(data.content?.["player.live_message"] || "")
+      setStatus("Message live enregistre")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function saveTierRewards() {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const rows = Number(debug?.rows || 0)
+      const entries = Array.from({ length: rows }, (_, index) => {
+        const tier = index + 1
+        const key = `reward.line_${tier}`
+        return {
+          key,
+          value: typeof tierRewards[key] === "string" ? tierRewards[key] : ""
+        }
+      })
+
+      const { response, data } = await fetchJson("/api/backend-bruno/content", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ entries })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur gains: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setTierRewards(data.content || {})
+      setStatus("Gains enregistres")
     } finally {
       setLoading(false)
     }
@@ -654,9 +729,59 @@ export default function Admin() {
               onChange={(e) => setLiveStreamInput(e.target.value)}
             />
             <button className="btn ghost" onClick={saveLiveStream} disabled={loading}>
-              Enregistrer URL live
+              Enregistrer URLs
             </button>
           </div>
+          <div className="row">
+            <input
+              className="input"
+              type="url"
+              placeholder="https://fr.ulule.com/..."
+              value={ululePageInput}
+              onChange={(e) => setUlulePageInput(e.target.value)}
+            />
+          </div>
+          <div className="row">
+            <textarea
+              className="input content-editor-textarea"
+              rows="3"
+              placeholder="Message affiche sous le compte a rebours"
+              value={liveMessage}
+              onChange={(e) => setLiveMessage(e.target.value)}
+            />
+            <button className="btn ghost" onClick={saveLiveMessage} disabled={loading}>
+              Enregistrer message
+            </button>
+          </div>
+          {debug?.rows ? (
+            <div className="panel" style={{ marginTop: 14, marginBottom: 0 }}>
+              <h2>Gains par manche</h2>
+              <div className="content-editor-list">
+                {Array.from({ length: Number(debug.rows) }, (_, index) => {
+                  const tier = index + 1
+                  const key = `reward.line_${tier}`
+                  const label = tier === Number(debug.rows) ? "Carton plein" : `${tier} ligne${tier > 1 ? "s" : ""}`
+                  return (
+                    <label key={key} className="content-editor-item">
+                      <span className="content-editor-key">{label}</span>
+                      <textarea
+                        className="input content-editor-textarea"
+                        rows="2"
+                        placeholder={`Gain pour ${label}`}
+                        value={tierRewards[key] || ""}
+                        onChange={(e) => setTierRewards((prev) => ({ ...prev, [key]: e.target.value }))}
+                      />
+                    </label>
+                  )
+                })}
+              </div>
+              <div className="row">
+                <button className="btn ghost" onClick={saveTierRewards} disabled={loading}>
+                  Enregistrer les gains
+                </button>
+              </div>
+            </div>
+          ) : null}
           {debug && (
             <>
               <div className="kpis">
