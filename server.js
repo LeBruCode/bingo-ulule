@@ -1143,13 +1143,12 @@ function parseItemAmountCents(item) {
   return parseMoneyToCents(raw)
 }
 
-function hasEligibleFigurationReward(order) {
+function hasEligibleReward(order) {
   const items = Array.isArray(order?.items) ? order.items : []
   return items.some((item) => {
-    const rewardName = String(item?.reward?.name || item?.reward?.title || item?.name || "").toLowerCase()
-    const looksLikeFigurationPack = rewardName.includes("figuration")
     const amountCents = parseItemAmountCents(item)
-    return looksLikeFigurationPack && amountCents >= ULULE_MIN_CONTRIBUTION_CENTS
+    const hasReward = Boolean(item?.reward_id || item?.reward?.id || item?.reward?.name || item?.reward?.title)
+    return hasReward && amountCents >= ULULE_MIN_CONTRIBUTION_CENTS
   })
 }
 
@@ -1297,10 +1296,10 @@ function upsertUluleEligible(order, nowMs) {
   if (!email) return false
 
   const totalCents = parseOrderTotalCents(order)
-  const eligibleReward = hasEligibleFigurationReward(order)
+  const eligibleReward = hasEligibleReward(order)
   const hasReward = hasOrderReward(order)
-  const eligibleDonation = !hasReward && totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
-  const eligible = eligibleReward || eligibleDonation
+  const eligibleByTotal = totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
+  const eligible = eligibleByTotal || eligibleReward
 
   const orderTime = parseOrderTimestampMs(order)
   const identity = extractOrderIdentity(order)

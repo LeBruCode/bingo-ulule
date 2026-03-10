@@ -4,16 +4,6 @@ import OldeupeLogo from "../components/OldeupeLogo.jsx"
 import useBrandLogo from "../hooks/useBrandLogo.js"
 
 const DEFAULT_CATEGORIES = ["coulisses", "creative", "chat", "public", "dons", "general"]
-const MOBILE_APPEARANCE_FIELDS = [
-  { key: "player.mobile_shell_font_size", label: "Base mobile", hint: "Texte global mobile", min: 0.95, max: 1.6, step: 0.01 },
-  { key: "player.mobile_title_size", label: "Titre", hint: "Titre principal Bingo Live", min: 1.4, max: 3.2, step: 0.01 },
-  { key: "player.mobile_text_size", label: "Texte courant", hint: "Paragraphes, labels et messages", min: 0.95, max: 1.8, step: 0.01 },
-  { key: "player.mobile_button_size", label: "Boutons", hint: "CTA et boutons mobile", min: 0.95, max: 1.8, step: 0.01 },
-  { key: "player.mobile_countdown_number_size", label: "Compteur chiffres", hint: "Jours, heures, minutes, secondes", min: 1.2, max: 3.4, step: 0.01 },
-  { key: "player.mobile_spotlight_size", label: "Manche en cours", hint: "Bloc de droite", min: 1.3, max: 3.4, step: 0.01 },
-  { key: "player.mobile_progress_size", label: "Progression", hint: "A gagner, progression, statuts", min: 0.95, max: 1.8, step: 0.01 },
-  { key: "player.mobile_card_text_size", label: "Texte des cartes", hint: "Texte des cartes bingo mobile", min: 0.95, max: 2.2, step: 0.01 }
-]
 
 export default function Admin() {
   const navigate = useNavigate()
@@ -26,7 +16,6 @@ export default function Admin() {
   const [ululePageInput, setUlulePageInput] = useState("")
   const [liveMessage, setLiveMessage] = useState("")
   const [tierRewards, setTierRewards] = useState({})
-  const [mobileAppearance, setMobileAppearance] = useState({})
   const [events, setEvents] = useState([])
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -150,12 +139,6 @@ export default function Admin() {
       if (contentCall.response.ok) {
         setTierRewards(contentCall.data.content || {})
         setLiveMessage(contentCall.data.content?.["player.live_message"] || "")
-        setMobileAppearance(
-          MOBILE_APPEARANCE_FIELDS.reduce((acc, field) => {
-            acc[field.key] = contentCall.data.content?.[field.key] || ""
-            return acc
-          }, {})
-        )
       }
       await loadRaffle(bootstrapCall.data.debug?.targetTier || 1)
       if (bootstrapCall.data.bootstrapping) {
@@ -490,39 +473,6 @@ export default function Admin() {
     }
   }
 
-  async function saveMobileAppearance() {
-    setLoading(true)
-    setStatus("")
-
-    try {
-      const entries = MOBILE_APPEARANCE_FIELDS.map((field) => ({
-        key: field.key,
-        value: String(mobileAppearance[field.key] || "").trim()
-      }))
-
-      const { response, data } = await fetchJson("/api/backend-bruno/content", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ entries })
-      })
-
-      if (!response.ok || !data.ok) {
-        setStatus(`Erreur tailles mobile: ${data.error || "unknown_error"}`)
-        return
-      }
-
-      setMobileAppearance(
-        MOBILE_APPEARANCE_FIELDS.reduce((acc, field) => {
-          acc[field.key] = data.content?.[field.key] || ""
-          return acc
-        }, {})
-      )
-      setStatus("Tailles mobile enregistrees")
-    } finally {
-      setLoading(false)
-    }
-  }
-
   async function chooseTargetTier(tier) {
     setTierLoading(true)
     setStatus("")
@@ -843,37 +793,6 @@ export default function Admin() {
             <button className="btn ghost" onClick={saveLiveMessage} disabled={loading}>
               Enregistrer message
             </button>
-          </div>
-          <div className="panel" style={{ marginTop: 14, marginBottom: 0 }}>
-            <h2>Tailles mobile</h2>
-            <p className="hint">Valeurs en `rem`. Tu ajustes ici la taille de la version mobile sans toucher au code.</p>
-            <div className="content-editor-list">
-              {MOBILE_APPEARANCE_FIELDS.map((field) => (
-                <label key={field.key} className="content-editor-item">
-                  <span className="content-editor-key">{field.label}</span>
-                  <small className="hint">{field.hint}</small>
-                  <input
-                    className="input"
-                    type="number"
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    value={mobileAppearance[field.key] || ""}
-                    onChange={(e) =>
-                      setMobileAppearance((prev) => ({
-                        ...prev,
-                        [field.key]: e.target.value
-                      }))
-                    }
-                  />
-                </label>
-              ))}
-            </div>
-            <div className="row">
-              <button className="btn ghost" onClick={saveMobileAppearance} disabled={loading}>
-                Enregistrer tailles mobile
-              </button>
-            </div>
           </div>
           {debug?.rows ? (
             <div className="panel" style={{ marginTop: 14, marginBottom: 0 }}>
