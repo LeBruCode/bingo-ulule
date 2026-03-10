@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Link } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
 import useBrandLogo from "../hooks/useBrandLogo.js"
 
@@ -233,9 +232,6 @@ export default function MilestoneStage({ adminView = false }) {
           </div>
           {adminView ? (
             <div className="row">
-              <Link className="btn ghost" to="/admin/milestones">
-                Retour tirages cagnotte
-              </Link>
               <button className="btn ghost" onClick={resetSelectedWindow} disabled={loading || !selectedWindow}>
                 Réinitialiser le tirage
               </button>
