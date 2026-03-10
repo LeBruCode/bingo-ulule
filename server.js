@@ -80,6 +80,7 @@ const ULULE_SYNC_INTERVAL_IDLE_MS = 10 * 60 * 1000
 const ULULE_SYNC_MAX_PAGES = 20
 const ULULE_SYNC_AUTO_LIVE = true
 let ululeContributionByEmail = new Map()
+let ululeOrderLedger = new Map()
 let ululeSyncTimer = null
 const ululeSyncState = {
   liveMode: false,
@@ -104,13 +105,19 @@ let runtimeStateSaveTimer = null
 let uiSettingsStorageReady = false
 const MAX_ADMIN_LOG = Number(process.env.MAX_ADMIN_LOG || 300)
 let adminActionLog = []
+let milestoneWinnersPerWindow = 1
+let milestoneWinnersByWindow = new Map()
+let milestoneWonEmails = new Set()
+let collectiveChallenges = []
+let activeCollectiveChallenge = null
+let collectiveChallengeTimer = null
 const DEFAULT_TEXT_CONTENT = {
   "brand.logo_src": "",
   "player.title": "Bingo Live",
   "player.subtitle": "Campagne en direct",
   "player.loading_card": "Chargement de la carte...",
   "player.game_ended_title": "Jeu terminé",
-  "player.game_ended_body": "Merci a tous pour votre participation.",
+  "player.game_ended_body": "Merci à tous pour votre participation.",
   "player.fallback_title": "Jeu indisponible",
   "player.fallback_body": "En raison de problèmes techniques, nous ne sommes malheureusement pas en mesure de pouvoir vous proposer ce jeu. Nous vous remercions toutefois pour votre participation. À très vite.",
   "player.no_cards_generated": "Initialisation du bingo en cours, réessaie dans quelques secondes.",
@@ -132,6 +139,7 @@ const DEFAULT_TEXT_CONTENT = {
   "player.mobile_spotlight_size": "2.34",
   "player.mobile_progress_size": "1.16",
   "player.mobile_card_text_size": "1.42",
+  "player.mobile_card_font_weight": "500",
   "player.raffle_button": "Participer au tirage au sort",
   "player.raffle_registered_banner": "Ta participation au tirage au sort est bien prise en compte.",
   "player.raffle_registered_status": "Tu participes au tirage au sort.",
@@ -145,7 +153,7 @@ const DEFAULT_TEXT_CONTENT = {
   "player.modal_title": "Participer au tirage",
   "player.modal_body": "Tu es qualifié pour {label}. Renseigne le prénom et l'adresse e-mail utilisée pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit être d'au moins 10 EUR.",
   "player.modal_first_name": "Prénom",
-  "player.modal_email": "Email utilise sur Ulule",
+  "player.modal_email": "E-mail utilisé sur Ulule",
   "player.modal_close": "Fermer",
   "player.modal_submit": "Valider ma participation",
   "player.modal_submit_loading": "Vérification...",
@@ -157,12 +165,12 @@ const DEFAULT_TEXT_CONTENT = {
   "player.success_duplicate": "E-mail déjà inscrit pour ce palier.",
   "player.success_validated": "Inscription au tirage validée.",
   "overlay.title": "Progression Bingo Live",
-  "overlay.events": "Evenements : {current}/{total}",
+  "overlay.events": "Événements : {current}/{total}",
   "overlay.players": "Joueurs : {count}",
-  "overlay.tier_done": "Gagne",
+  "overlay.tier_done": "Gagné",
   "overlay.tier_pending": "En attente",
   "overlay.next_tier": "Prochain palier : {label}",
-  "overlay.all_done": "Tous les paliers sont gagnes",
+  "overlay.all_done": "Tous les paliers sont gagnés",
   "reward.line_1": "",
   "reward.line_2": "",
   "reward.line_3": "",
@@ -176,7 +184,8 @@ let editableContent = { ...DEFAULT_TEXT_CONTENT }
 let contentStorageReady = false
 const DEFAULT_UI_SETTINGS = {
   playerDensityMode: "lisible",
-  playerFullscreenMode: false
+  playerFullscreenMode: false,
+  playerMobileLayout: "text"
 }
 let uiSettings = { ...DEFAULT_UI_SETTINGS }
 
@@ -343,6 +352,178 @@ function serializeWinners() {
   }
 }
 
+function normalizeChallengeType(value) {
+  return value === "eligible_streak" ? value : "eligible_streak"
+}
+
+function sanitizeChallengeLabel(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().slice(0, 120)
+}
+
+function normalizeChallengeDefinitions(input) {
+  if (!Array.isArray(input)) return []
+  return input
+    .filter((row) => row && typeof row.id === "string")
+    .map((row) => ({
+      id: row.id,
+      label: sanitizeChallengeLabel(row.label),
+      type: normalizeChallengeType(row.type),
+      targetCount: Math.min(Math.max(1, Number(row.targetCount || 1)), 100),
+      durationSeconds: Math.min(Math.max(30, Number(row.durationSeconds || 300)), 60 * 60),
+      createdAt: typeof row.createdAt === "string" ? row.createdAt : new Date().toISOString()
+    }))
+    .filter((row) => row.label)
+}
+
+function normalizeActiveCollectiveChallenge(input) {
+  if (!input || typeof input !== "object" || typeof input.id !== "string") return null
+  const startedAt = typeof input.startedAt === "string" ? input.startedAt : new Date().toISOString()
+  const endsAt = typeof input.endsAt === "string" ? input.endsAt : new Date(Date.now() + 5 * 60 * 1000).toISOString()
+  return {
+    id: input.id,
+    definitionId: typeof input.definitionId === "string" ? input.definitionId : "",
+    label: sanitizeChallengeLabel(input.label),
+    type: normalizeChallengeType(input.type),
+    targetCount: Math.min(Math.max(1, Number(input.targetCount || 1)), 100),
+    durationSeconds: Math.min(Math.max(30, Number(input.durationSeconds || 300)), 60 * 60),
+    startedAt,
+    endsAt,
+    status: input.status === "completed" || input.status === "expired" || input.status === "stopped" ? input.status : "running",
+    progress: Math.max(0, Number(input.progress || 0)),
+    currentStreak: Math.max(0, Number(input.currentStreak || 0)),
+    lastOrderId: typeof input.lastOrderId === "string" ? input.lastOrderId : "",
+    lastOrderAt: typeof input.lastOrderAt === "string" ? input.lastOrderAt : "",
+    completedAt: typeof input.completedAt === "string" ? input.completedAt : "",
+    updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : startedAt
+  }
+}
+
+function formatChallengeCountdown(endsAt) {
+  const endsAtMs = Date.parse(endsAt || "")
+  if (!Number.isFinite(endsAtMs)) return 0
+  return Math.max(0, endsAtMs - Date.now())
+}
+
+function getSortedUluleOrders() {
+  return [...ululeOrderLedger.values()].sort((a, b) => {
+    const left = Date.parse(a.paidAt || "") || 0
+    const right = Date.parse(b.paidAt || "") || 0
+    if (left !== right) return left - right
+    return String(a.id || "").localeCompare(String(b.id || ""))
+  })
+}
+
+function serializeCollectiveChallengePublic() {
+  const challenge = normalizeActiveCollectiveChallenge(activeCollectiveChallenge)
+  if (!challenge) return null
+  if (challenge.status === "expired" || challenge.status === "stopped") return null
+  return {
+    id: challenge.id,
+    label: challenge.label,
+    type: challenge.type,
+    status: challenge.status,
+    targetCount: challenge.targetCount,
+    durationSeconds: challenge.durationSeconds,
+    progress: challenge.progress,
+    currentStreak: challenge.currentStreak,
+    startedAt: challenge.startedAt,
+    endsAt: challenge.endsAt,
+    remainingMs: formatChallengeCountdown(challenge.endsAt),
+    completedAt: challenge.completedAt || null
+  }
+}
+
+function serializeCollectiveChallengesAdmin() {
+  return {
+    definitions: collectiveChallenges,
+    active: activeCollectiveChallenge
+      ? {
+          ...activeCollectiveChallenge,
+          remainingMs: formatChallengeCountdown(activeCollectiveChallenge.endsAt)
+        }
+      : null
+  }
+}
+
+function clearCollectiveChallengeTimer() {
+  if (collectiveChallengeTimer) {
+    clearTimeout(collectiveChallengeTimer)
+    collectiveChallengeTimer = null
+  }
+}
+
+function scheduleCollectiveChallengeTimer() {
+  clearCollectiveChallengeTimer()
+  if (!activeCollectiveChallenge || activeCollectiveChallenge.status !== "running") return
+  const remainingMs = formatChallengeCountdown(activeCollectiveChallenge.endsAt)
+  if (remainingMs <= 0) return
+  collectiveChallengeTimer = setTimeout(() => {
+    const changed = evaluateActiveCollectiveChallenge({ reason: "timeout" })
+    if (changed) {
+      io.emit("state", serializeState())
+    }
+  }, remainingMs + 20)
+}
+
+function evaluateActiveCollectiveChallenge({ reason = "sync" } = {}) {
+  if (!activeCollectiveChallenge) return false
+  let changed = false
+  const challenge = { ...activeCollectiveChallenge }
+  const now = Date.now()
+  const startedAtMs = Date.parse(challenge.startedAt || "")
+  const endsAtMs = Date.parse(challenge.endsAt || "")
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endsAtMs)) return false
+
+  if (challenge.status === "running") {
+    const relevantOrders = getSortedUluleOrders().filter((order) => {
+      const paidAtMs = Date.parse(order.paidAt || "")
+      return Number.isFinite(paidAtMs) && paidAtMs >= startedAtMs && paidAtMs <= Math.min(now, endsAtMs)
+    })
+
+    let streak = 0
+    let lastOrderId = ""
+    let lastOrderAt = ""
+    for (const order of relevantOrders) {
+      lastOrderId = order.id || ""
+      lastOrderAt = order.paidAt || ""
+      if (challenge.type === "eligible_streak") {
+        streak = order.eligible ? streak + 1 : 0
+      }
+    }
+
+    if (challenge.currentStreak !== streak) {
+      challenge.currentStreak = streak
+      challenge.progress = streak
+      changed = true
+    }
+    if (challenge.lastOrderId !== lastOrderId || challenge.lastOrderAt !== lastOrderAt) {
+      challenge.lastOrderId = lastOrderId
+      challenge.lastOrderAt = lastOrderAt
+      changed = true
+    }
+
+    if (challenge.currentStreak >= challenge.targetCount) {
+      challenge.status = "completed"
+      challenge.completedAt = new Date().toISOString()
+      changed = true
+      pushAdminLog("collective_challenge_completed", { id: challenge.id, label: challenge.label, reason })
+    } else if (now >= endsAtMs) {
+      challenge.status = "expired"
+      changed = true
+      pushAdminLog("collective_challenge_expired", { id: challenge.id, label: challenge.label, reason })
+    }
+  }
+
+  if (changed) {
+    challenge.updatedAt = new Date().toISOString()
+    activeCollectiveChallenge = challenge
+    scheduleRuntimeStateSave(50)
+  }
+  scheduleCollectiveChallengeTimer()
+  return changed
+}
+
 function serializeWinnerCounts() {
   const byLine = {}
   winners.forEach((set, index) => {
@@ -368,6 +549,7 @@ function serializeState() {
     },
     campaign: serializeCampaign(),
     liveStream: serializeLiveStream(),
+    collectiveChallenge: serializeCollectiveChallengePublic(),
     phase: {
       targetTier: currentTargetTier,
       targetLabel:
@@ -410,10 +592,16 @@ function normalizeDensityMode(value) {
   return DEFAULT_UI_SETTINGS.playerDensityMode
 }
 
+function normalizePlayerMobileLayout(value) {
+  if (value === "numbers" || value === "text") return value
+  return DEFAULT_UI_SETTINGS.playerMobileLayout
+}
+
 function serializeUiSettings() {
   return {
     playerDensityMode: normalizeDensityMode(uiSettings.playerDensityMode),
-    playerFullscreenMode: Boolean(uiSettings.playerFullscreenMode)
+    playerFullscreenMode: Boolean(uiSettings.playerFullscreenMode),
+    playerMobileLayout: normalizePlayerMobileLayout(uiSettings.playerMobileLayout)
   }
 }
 
@@ -490,6 +678,9 @@ async function loadUiSettings() {
     if (row?.setting_key === "playerFullscreenMode") {
       next.playerFullscreenMode = Boolean(row.setting_value)
     }
+    if (row?.setting_key === "playerMobileLayout") {
+      next.playerMobileLayout = normalizePlayerMobileLayout(row.setting_value)
+    }
   }
   uiSettings = next
   uiSettingsStorageReady = true
@@ -512,6 +703,10 @@ async function saveUiSettings(entries) {
     if (entry.key === "playerFullscreenMode") {
       next.playerFullscreenMode = Boolean(entry.value)
       rows.push({ setting_key: "playerFullscreenMode", setting_value: next.playerFullscreenMode })
+    }
+    if (entry.key === "playerMobileLayout") {
+      next.playerMobileLayout = normalizePlayerMobileLayout(entry.value)
+      rows.push({ setting_key: "playerMobileLayout", setting_value: next.playerMobileLayout })
     }
   }
 
@@ -576,6 +771,12 @@ function serializeRuntimeState() {
     activationLog,
     adminActionLog,
     activationCountByEvent: Object.fromEntries(activationCountByEvent.entries()),
+    milestoneWinnersPerWindow,
+    milestoneWonEmails: [...milestoneWonEmails],
+    milestoneWinnersByWindow: [...milestoneWinnersByWindow.entries()],
+    collectiveChallenges,
+    activeCollectiveChallenge,
+    ululeOrderLedger: [...ululeOrderLedger.values()],
     raffleEntrySeq,
     raffleQuotaByTier,
     raffleWonEmails: [...raffleWonEmails],
@@ -634,6 +835,55 @@ function normalizeRaffleEntries(input) {
     }
     return map
   })
+}
+
+function normalizeMilestoneWinners(input) {
+  const map = new Map()
+  if (!Array.isArray(input)) return map
+  for (const row of input) {
+    if (!Array.isArray(row) || typeof row[0] !== "string" || !Array.isArray(row[1])) continue
+    map.set(
+      row[0],
+      row[1]
+        .filter((item) => item && typeof item.id === "string" && typeof item.email === "string")
+        .map((item) => ({
+          id: item.id,
+          email: normalizeRaffleEmail(item.email),
+          firstName: normalizeFirstName(item.firstName),
+          lastInitial: normalizeLastInitial(item.lastInitial),
+          city: normalizeCity(item.city),
+          country: normalizeCountry(item.country),
+          departmentCode: typeof item.departmentCode === "string" ? item.departmentCode.trim().slice(0, 12) : "",
+          amountCents: Math.max(0, Number(item.amountCents || 0)),
+          orderId: typeof item.orderId === "string" ? item.orderId : "",
+          paidAt: typeof item.paidAt === "string" ? item.paidAt : "",
+          selectedAt: typeof item.selectedAt === "string" ? item.selectedAt : new Date().toISOString()
+        }))
+    )
+  }
+  return map
+}
+
+function normalizeUluleOrderLedger(input) {
+  const map = new Map()
+  if (!Array.isArray(input)) return map
+  for (const row of input) {
+    if (!row || typeof row.id !== "string") continue
+    map.set(row.id, {
+      id: row.id,
+      email: normalizeRaffleEmail(row.email),
+      totalCents: Math.max(0, Number(row.totalCents || 0)),
+      eligible: Boolean(row.eligible),
+      hasReward: Boolean(row.hasReward),
+      firstName: normalizeFirstName(row.firstName),
+      lastInitial: normalizeLastInitial(row.lastInitial),
+      city: normalizeCity(row.city),
+      country: normalizeCountry(row.country),
+      departmentCode: typeof row.departmentCode === "string" ? row.departmentCode.trim().slice(0, 12) : "",
+      paidAt: typeof row.paidAt === "string" ? row.paidAt : new Date().toISOString()
+    })
+  }
+  return map
 }
 
 function canRestorePersistedCards(stateValue) {
@@ -754,6 +1004,18 @@ function applyPendingRuntimeState() {
         .filter((item) => item && typeof item.action === "string")
         .slice(-MAX_ADMIN_LOG)
     : []
+  milestoneWinnersPerWindow = Number.isInteger(Number(stateValue.milestoneWinnersPerWindow))
+    ? Math.min(Math.max(1, Number(stateValue.milestoneWinnersPerWindow)), 50)
+    : 1
+  collectiveChallenges = normalizeChallengeDefinitions(stateValue.collectiveChallenges)
+  activeCollectiveChallenge = normalizeActiveCollectiveChallenge(stateValue.activeCollectiveChallenge)
+  milestoneWonEmails = new Set(
+    Array.isArray(stateValue.milestoneWonEmails)
+      ? stateValue.milestoneWonEmails.map((email) => normalizeRaffleEmail(email)).filter(Boolean)
+      : []
+  )
+  milestoneWinnersByWindow = normalizeMilestoneWinners(stateValue.milestoneWinnersByWindow)
+  ululeOrderLedger = normalizeUluleOrderLedger(stateValue.ululeOrderLedger)
 
   const rawCounts = stateValue.activationCountByEvent && typeof stateValue.activationCountByEvent === "object"
     ? stateValue.activationCountByEvent
@@ -804,6 +1066,7 @@ function applyPendingRuntimeState() {
     const raw = Array.isArray(stateValue.raffleQuotaByTier) ? Number(stateValue.raffleQuotaByTier[index]) : NaN
     return Number.isInteger(raw) && raw >= 1 ? raw : defaultRaffleQuota(index + 1, ROWS)
   })
+  evaluateActiveCollectiveChallenge({ reason: "restore" })
 }
 
 function restoreRuntimeProgress() {
@@ -863,6 +1126,8 @@ function resetGameState() {
   activationLog = []
   adminActionLog = []
   activationCountByEvent = new Map()
+  activeCollectiveChallenge = null
+  clearCollectiveChallengeTimer()
   markProgressStatsDirty()
   gameVersion += 1
 }
@@ -1246,6 +1511,7 @@ function getDebugState() {
     tierLocked: (winners[currentTargetTier - 1]?.size || 0) > 0,
     campaign: serializeCampaign(),
     liveStream: serializeLiveStream(),
+    collectiveChallenges: serializeCollectiveChallengesAdmin(),
     ulule: getUluleStatus(),
     raffle: serializeRaffleSummary(),
     progressByLine: getProgressStatsByLine(),
@@ -1437,6 +1703,13 @@ function extractOrderLocation(order) {
   }
 }
 
+function buildUluleOrderId(order, email, totalCents, paidAtMs) {
+  const directId = order?.id || order?.uuid || order?.reference || order?.order_id
+  if (typeof directId === "string" && directId.trim()) return directId.trim()
+  if (typeof directId === "number" && Number.isFinite(directId)) return String(directId)
+  return `ulule-${email}-${paidAtMs}-${totalCents}`
+}
+
 function parseOrderTimestampMs(order) {
   const candidates = [
     order?.payment_completed_at,
@@ -1475,6 +1748,7 @@ function upsertUluleEligible(order, nowMs) {
   const orderTime = parseOrderTimestampMs(order)
   const identity = extractOrderIdentity(order)
   const location = extractOrderLocation(order)
+  const orderId = buildUluleOrderId(order, email, totalCents, orderTime)
   const existing = ululeContributionByEmail.get(email)
   const eligibilityReason = eligible
     ? "eligible"
@@ -1515,6 +1789,19 @@ function upsertUluleEligible(order, nowMs) {
         updatedAtMs: nowMs
       }
   ululeContributionByEmail.set(email, next)
+  ululeOrderLedger.set(orderId, {
+    id: orderId,
+    email,
+    totalCents,
+    eligible,
+    hasReward: eligibleReward || hasReward,
+    firstName: identity.firstName,
+    lastInitial: identity.lastInitial,
+    city: location.city,
+    country: location.country,
+    departmentCode: location.departmentCode,
+    paidAt: new Date(orderTime).toISOString()
+  })
   return eligible
 }
 
@@ -1613,6 +1900,13 @@ async function syncUluleWindow({ reason = "manual", sinceMs } = {}) {
     ululeSyncState.lastError = null
     ululeSyncState.updatedOrders = updatedOrders
     ululeSyncState.lastDurationMs = Date.now() - startedAtMs
+    const challengeChanged = evaluateActiveCollectiveChallenge({ reason })
+    if (recentOrders.length > 0) {
+      scheduleRuntimeStateSave(100)
+    }
+    if (challengeChanged) {
+      io.emit("state", serializeState())
+    }
     return { ok: true, updatedOrders, scannedOrders: recentOrders.length }
   } catch (error) {
     ululeSyncState.lastError = String(error?.message || error)
@@ -1733,6 +2027,118 @@ function serializeRaffleSummary() {
   return {
     currentTier: currentTargetTier,
     byTier
+  }
+}
+
+function serializeAllRaffleWinners() {
+  const content = serializeContent()
+  const winners = []
+
+  for (let tier = 1; tier <= ROWS; tier++) {
+    const tierLabel = tier === ROWS ? "Carton plein" : `${tier} ligne${tier > 1 ? "s" : ""}`
+    const reward = typeof content[`reward.line_${tier}`] === "string" ? content[`reward.line_${tier}`].trim() : ""
+    const tierWinners = Array.isArray(raffleWinnerByTier[tier - 1]) ? raffleWinnerByTier[tier - 1] : []
+
+    for (const winner of tierWinners) {
+      winners.push({
+        id: winner.id,
+        tier,
+        tierLabel,
+        reward,
+        email: winner.email || "",
+        firstName: winner.firstName || "",
+        lastInitial: winner.lastInitial || "",
+        playerToken: winner.playerToken || "",
+        selectedAt: winner.selectedAt || null,
+        ulule: winner.ulule || null
+      })
+    }
+  }
+
+  winners.sort((a, b) => {
+    const left = Date.parse(a.selectedAt || "") || 0
+    const right = Date.parse(b.selectedAt || "") || 0
+    return right - left
+  })
+
+  return winners
+}
+
+function buildMilestoneWindows() {
+  const windowSizeCents = 10000 * 100
+  const orders = [...ululeOrderLedger.values()]
+    .filter((order) => Number(order.totalCents || 0) > 0)
+    .sort((a, b) => {
+      const left = Date.parse(a.paidAt || "") || 0
+      const right = Date.parse(b.paidAt || "") || 0
+      if (left !== right) return left - right
+      return a.id.localeCompare(b.id)
+    })
+
+  const windows = new Map()
+  let cumulativeCents = 0
+
+  for (const order of orders) {
+    const windowIndex = Math.floor(cumulativeCents / windowSizeCents)
+    const windowKey = `window_${windowIndex + 1}`
+    if (!windows.has(windowKey)) {
+      const startCents = windowIndex * windowSizeCents
+      windows.set(windowKey, {
+        key: windowKey,
+        index: windowIndex + 1,
+        startCents,
+        endCents: startCents + windowSizeCents - 1,
+        totalOrders: 0,
+        eligibleCandidatesMap: new Map(),
+        totalAmountCents: 0
+      })
+    }
+
+    const window = windows.get(windowKey)
+    window.totalOrders += 1
+    window.totalAmountCents += Number(order.totalCents || 0)
+
+    if (order.eligible && order.email) {
+      if (!window.eligibleCandidatesMap.has(order.email)) {
+        window.eligibleCandidatesMap.set(order.email, {
+          id: order.id,
+          email: order.email,
+          firstName: order.firstName || "",
+          lastInitial: order.lastInitial || "",
+          city: order.city || "",
+          country: order.country || "",
+          departmentCode: order.departmentCode || "",
+          amountCents: Number(order.totalCents || 0),
+          orderId: order.id,
+          paidAt: order.paidAt || ""
+        })
+      }
+    }
+
+    cumulativeCents += Number(order.totalCents || 0)
+  }
+
+  return [...windows.values()].map((window) => {
+    const winners = milestoneWinnersByWindow.get(window.key) || []
+    return {
+      key: window.key,
+      index: window.index,
+      startCents: window.startCents,
+      endCents: window.endCents,
+      totalOrders: window.totalOrders,
+      totalAmountCents: window.totalAmountCents,
+      candidates: [...window.eligibleCandidatesMap.values()],
+      candidatesCount: window.eligibleCandidatesMap.size,
+      winners,
+      winnersCount: winners.length
+    }
+  })
+}
+
+function serializeMilestoneRaffles() {
+  return {
+    winnersPerWindow: milestoneWinnersPerWindow,
+    windows: buildMilestoneWindows()
   }
 }
 
@@ -1949,6 +2355,151 @@ fastify.get("/api/backend-bruno/ui-settings", { preHandler: requireAdmin }, asyn
     ok: true,
     persisted: uiSettingsStorageReady,
     settings: serializeUiSettings()
+  }
+})
+
+fastify.get("/api/backend-bruno/challenges", { preHandler: requireAdmin }, async () => {
+  evaluateActiveCollectiveChallenge({ reason: "admin_load" })
+  return {
+    ok: true,
+    challenges: serializeCollectiveChallengesAdmin()
+  }
+})
+
+fastify.post("/api/backend-bruno/challenges", { preHandler: requireAdmin }, async (req, reply) => {
+  const label = sanitizeChallengeLabel(req.body?.label)
+  const type = normalizeChallengeType(req.body?.type)
+  const targetCount = Math.min(Math.max(1, Number(req.body?.targetCount || 1)), 100)
+  const durationSeconds = Math.min(Math.max(30, Number(req.body?.durationSeconds || 300)), 60 * 60)
+  if (!label) {
+    reply.code(400)
+    return { ok: false, error: "invalid_label" }
+  }
+
+  collectiveChallenges.push({
+    id: `challenge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    label,
+    type,
+    targetCount,
+    durationSeconds,
+    createdAt: new Date().toISOString()
+  })
+  await saveRuntimeState()
+  pushAdminLog("create_collective_challenge", { label, type, targetCount, durationSeconds })
+  return {
+    ok: true,
+    challenges: serializeCollectiveChallengesAdmin()
+  }
+})
+
+fastify.patch("/api/backend-bruno/challenges/:id", { preHandler: requireAdmin }, async (req, reply) => {
+  const id = String(req.params?.id || "")
+  const index = collectiveChallenges.findIndex((item) => item.id === id)
+  if (index === -1) {
+    reply.code(404)
+    return { ok: false, error: "not_found" }
+  }
+
+  const current = collectiveChallenges[index]
+  const next = {
+    ...current,
+    label: req.body?.label !== undefined ? sanitizeChallengeLabel(req.body.label) : current.label,
+    type: req.body?.type !== undefined ? normalizeChallengeType(req.body.type) : current.type,
+    targetCount: req.body?.targetCount !== undefined ? Math.min(Math.max(1, Number(req.body.targetCount || 1)), 100) : current.targetCount,
+    durationSeconds: req.body?.durationSeconds !== undefined ? Math.min(Math.max(30, Number(req.body.durationSeconds || 300)), 60 * 60) : current.durationSeconds
+  }
+  if (!next.label) {
+    reply.code(400)
+    return { ok: false, error: "invalid_label" }
+  }
+
+  collectiveChallenges[index] = next
+  await saveRuntimeState()
+  pushAdminLog("update_collective_challenge", { id, label: next.label })
+  return {
+    ok: true,
+    challenges: serializeCollectiveChallengesAdmin()
+  }
+})
+
+fastify.delete("/api/backend-bruno/challenges/:id", { preHandler: requireAdmin }, async (req, reply) => {
+  const id = String(req.params?.id || "")
+  const current = collectiveChallenges.find((item) => item.id === id)
+  if (!current) {
+    reply.code(404)
+    return { ok: false, error: "not_found" }
+  }
+
+  collectiveChallenges = collectiveChallenges.filter((item) => item.id !== id)
+  if (activeCollectiveChallenge?.definitionId === id || activeCollectiveChallenge?.id === id) {
+    activeCollectiveChallenge = null
+    clearCollectiveChallengeTimer()
+    io.emit("state", serializeState())
+  }
+  await saveRuntimeState()
+  pushAdminLog("delete_collective_challenge", { id, label: current.label })
+  return {
+    ok: true,
+    challenges: serializeCollectiveChallengesAdmin()
+  }
+})
+
+fastify.post("/api/backend-bruno/challenges/start", { preHandler: requireAdmin }, async (req, reply) => {
+  const id = String(req.body?.id || "")
+  const definition = collectiveChallenges.find((item) => item.id === id)
+  if (!definition) {
+    reply.code(404)
+    return { ok: false, error: "not_found" }
+  }
+
+  const now = Date.now()
+  activeCollectiveChallenge = {
+    id: `active-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    definitionId: definition.id,
+    label: definition.label,
+    type: definition.type,
+    targetCount: definition.targetCount,
+    durationSeconds: definition.durationSeconds,
+    startedAt: new Date(now).toISOString(),
+    endsAt: new Date(now + definition.durationSeconds * 1000).toISOString(),
+    status: "running",
+    progress: 0,
+    currentStreak: 0,
+    lastOrderId: "",
+    lastOrderAt: "",
+    completedAt: "",
+    updatedAt: new Date(now).toISOString()
+  }
+  evaluateActiveCollectiveChallenge({ reason: "start" })
+  scheduleCollectiveChallengeTimer()
+  await saveRuntimeState()
+  pushAdminLog("start_collective_challenge", { id: definition.id, label: definition.label })
+  io.emit("state", serializeState())
+  return {
+    ok: true,
+    challenges: serializeCollectiveChallengesAdmin(),
+    state: serializeState()
+  }
+})
+
+fastify.post("/api/backend-bruno/challenges/stop", { preHandler: requireAdmin }, async () => {
+  if (!activeCollectiveChallenge) {
+    return { ok: true, challenges: serializeCollectiveChallengesAdmin(), unchanged: true }
+  }
+  const previous = activeCollectiveChallenge
+  activeCollectiveChallenge = {
+    ...activeCollectiveChallenge,
+    status: "stopped",
+    updatedAt: new Date().toISOString()
+  }
+  clearCollectiveChallengeTimer()
+  await saveRuntimeState()
+  pushAdminLog("stop_collective_challenge", { id: previous.id, label: previous.label })
+  io.emit("state", serializeState())
+  return {
+    ok: true,
+    challenges: serializeCollectiveChallengesAdmin(),
+    state: serializeState()
   }
 })
 
@@ -2312,6 +2863,86 @@ fastify.get("/api/backend-bruno/raffle", { preHandler: requireAdmin }, async (re
     return { ok: false, error: "invalid_tier", min: 1, max: ROWS }
   }
   return { ok: true, ...serializeRaffleTier(tier) }
+})
+
+fastify.get("/api/backend-bruno/winners", { preHandler: requireAdmin }, async () => {
+  return {
+    ok: true,
+    winners: serializeAllRaffleWinners(),
+    debug: getDebugState()
+  }
+})
+
+fastify.get("/api/backend-bruno/milestone-raffles", { preHandler: requireAdmin }, async () => {
+  return {
+    ok: true,
+    milestoneRaffles: serializeMilestoneRaffles(),
+    debug: getDebugState()
+  }
+})
+
+fastify.patch("/api/backend-bruno/milestone-raffles/settings", { preHandler: requireAdmin }, async (req, reply) => {
+  const winnersPerWindow = Number(req.body?.winnersPerWindow)
+  if (!Number.isInteger(winnersPerWindow) || winnersPerWindow < 1 || winnersPerWindow > 50) {
+    reply.code(400)
+    return { ok: false, error: "invalid_winners_per_window" }
+  }
+
+  milestoneWinnersPerWindow = winnersPerWindow
+  await saveRuntimeState()
+  pushAdminLog("update_milestone_raffle_settings", { winnersPerWindow })
+  return {
+    ok: true,
+    milestoneRaffles: serializeMilestoneRaffles()
+  }
+})
+
+fastify.post("/api/backend-bruno/milestone-raffles/draw", { preHandler: requireAdmin }, async (req, reply) => {
+  const windowKey = typeof req.body?.windowKey === "string" ? req.body.windowKey.trim() : ""
+  if (!windowKey) {
+    reply.code(400)
+    return { ok: false, error: "invalid_window_key" }
+  }
+
+  const windows = serializeMilestoneRaffles().windows
+  const targetWindow = windows.find((window) => window.key === windowKey)
+  if (!targetWindow) {
+    reply.code(404)
+    return { ok: false, error: "window_not_found" }
+  }
+
+  if (targetWindow.winnersCount > 0) {
+    return { ok: true, alreadyDrawn: true, window: targetWindow, milestoneRaffles: serializeMilestoneRaffles() }
+  }
+
+  const eligibleCandidates = targetWindow.candidates.filter((candidate) => !milestoneWonEmails.has(candidate.email))
+  if (eligibleCandidates.length === 0) {
+    reply.code(400)
+    return { ok: false, error: "no_eligible_candidates" }
+  }
+
+  const winnersToDraw = Math.min(milestoneWinnersPerWindow, eligibleCandidates.length)
+  const pool = [...eligibleCandidates]
+  const selectedWinners = []
+  while (selectedWinners.length < winnersToDraw && pool.length > 0) {
+    const pickedIndex = crypto.randomInt(0, pool.length)
+    const picked = pool.splice(pickedIndex, 1)[0]
+    selectedWinners.push({
+      ...picked,
+      selectedAt: new Date().toISOString()
+    })
+    milestoneWonEmails.add(picked.email)
+  }
+
+  milestoneWinnersByWindow.set(windowKey, selectedWinners)
+  await saveRuntimeState()
+  pushAdminLog("draw_milestone_raffle", { windowKey, winners: selectedWinners.length })
+  return {
+    ok: true,
+    winners: selectedWinners,
+    window: serializeMilestoneRaffles().windows.find((window) => window.key === windowKey) || null,
+    milestoneRaffles: serializeMilestoneRaffles()
+  }
 })
 
 fastify.post("/api/backend-bruno/raffle/enter", { preHandler: requireAdmin }, async (req, reply) => {

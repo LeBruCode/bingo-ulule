@@ -69,7 +69,7 @@ export default function AdminRaffle({ projectionOnly = false }) {
   }
 
   function humanizeError(errorCode) {
-    if (errorCode === "cannot_decrease_tier") return "Impossible de revenir a une manche precedente."
+    if (errorCode === "cannot_decrease_tier") return "Impossible de revenir à une manche précédente."
     return errorCode || "unknown_error"
   }
 
@@ -337,11 +337,16 @@ export default function AdminRaffle({ projectionOnly = false }) {
         <div className="raffle-stage-head">
           <div className={`raffle-pulse ${spinning ? "on" : ""}`}>TIRAGE {spinning ? "• TOC TOC TOC •" : "PRÊT"}</div>
           <div className="raffle-counts">
-            <span>Candidats: <strong>{entries.length}</strong></span>
-            <span>Gagnants à tirer: <strong>{activeTierQuota}</strong></span>
-            <span>Événements tirés: <strong>{debug?.triggered || 0}</strong></span>
-            <span>Joueurs connectés: <strong>{debug?.connectedPlayers || 0}</strong></span>
+            <span>Candidats : <strong>{entries.length}</strong></span>
+            <span>Gagnants à tirer : <strong>{activeTierQuota}</strong></span>
+            <span>Événements activés : <strong>{debug?.triggered || 0}</strong></span>
+            <span>Joueurs connectés : <strong>{debug?.connectedPlayers || 0}</strong></span>
           </div>
+        </div>
+
+        <div className="raffle-reward-banner">
+          <span>À gagner</span>
+          <strong>{currentReward || "Aucun lot renseigné pour cette manche"}</strong>
         </div>
 
         <div className="raffle-hero">
@@ -360,7 +365,7 @@ export default function AdminRaffle({ projectionOnly = false }) {
             </strong>
             <small>
               {featuredWinner
-                ? `Palier tiré: ${debug?.targetLabel || `${tier} ligne`} • ${winners.length} / ${activeTierQuota}`
+                ? `Palier tiré : ${debug?.targetLabel || `${tier} ligne`} • ${winners.length} / ${activeTierQuota}`
                 : rafflePhase === "countdown"
                   ? "Le tirage démarre maintenant"
                 : rafflePhase === "finalists"

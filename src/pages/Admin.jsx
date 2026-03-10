@@ -132,7 +132,7 @@ export default function Admin() {
   }
 
   function humanizeError(errorCode) {
-    if (errorCode === "cannot_decrease_tier") return "Impossible de revenir a une manche precedente."
+    if (errorCode === "cannot_decrease_tier") return "Impossible de revenir à une manche précédente."
     return errorCode || "unknown_error"
   }
 
@@ -426,7 +426,7 @@ export default function Admin() {
         return
       }
 
-      setStatus(`Format applique: ${data.board.rows}x${data.board.cols}`)
+      setStatus(`Format appliqué : ${data.board.rows}x${data.board.cols}`)
       await loadDashboard()
     } finally {
       setLoading(false)
@@ -521,7 +521,7 @@ export default function Admin() {
       }
 
       setLiveMessage(data.content?.["player.live_message"] || "")
-      setStatus("Message live enregistre")
+      setStatus("Message live enregistré")
     } finally {
       setLoading(false)
     }
@@ -554,7 +554,7 @@ export default function Admin() {
       }
 
       setTierRewards(data.content || {})
-      setStatus("Gains enregistres")
+      setStatus("Gains enregistrés")
     } finally {
       setLoading(false)
     }
@@ -613,7 +613,7 @@ export default function Admin() {
 
       setDebug(data.debug || null)
       await loadRaffle(tier)
-      setStatus(`Palier en cours: ${data.debug?.targetLabel || `${tier} ligne(s)`}`)
+      setStatus(`Palier en cours : ${data.debug?.targetLabel || `${tier} ligne(s)`}`)
     } finally {
       setTierLoading(false)
     }
@@ -656,7 +656,7 @@ export default function Admin() {
       }
 
       setDebug(data.debug || null)
-      setStatus(nextActive ? "Mode incident active" : "Mode incident desactive")
+      setStatus(nextActive ? "Mode incident activé" : "Mode incident désactivé")
     } finally {
       setLoading(false)
     }
@@ -682,7 +682,7 @@ export default function Admin() {
       })
       if (!response.ok || !data.ok) {
         if (data.error === "not_ulule_eligible") {
-          setStatus("Email non éligible Ulule: contribution avec contrepartie ou >= 10€ requise")
+          setStatus("E-mail non éligible Ulule : contribution avec contrepartie ou >= 10 € requise")
           return
         }
         if (data.error === "ulule_not_configured") {
@@ -802,11 +802,20 @@ export default function Admin() {
           <Link className="btn ghost" to="/admin/control">
             Pilotage mobile
           </Link>
+          <Link className="btn ghost" to="/admin/winners">
+            Gagnants
+          </Link>
+          <Link className="btn ghost" to="/admin/milestones">
+            Tirages cagnotte
+          </Link>
+          <Link className="btn ghost" to="/admin/challenges">
+            Défis collectifs
+          </Link>
           <Link className="btn ghost" to="/admin/content">
             Textes
           </Link>
           <button className="btn ghost" onClick={logout}>
-            Deconnexion
+            Déconnexion
           </button>
         </div>
       </div>
@@ -853,7 +862,7 @@ export default function Admin() {
           </div>
           {debug?.targetLabel ? (
             <p className="hint">
-              Palier en cours: <strong>{debug.targetLabel}</strong>
+              Palier en cours : <strong>{debug.targetLabel}</strong>
               {debug?.tierLocked ? " (gagnant trouvé, passe au palier suivant)" : ""}
             </p>
           ) : null}
@@ -864,7 +873,7 @@ export default function Admin() {
             </div>
           ) : null}
           {debug?.gameEnded ? <p className="status">Le jeu est actuellement terminé pour tous les joueurs.</p> : null}
-          {debug?.gameFallbackActive ? <p className="status">Le fallback technique est actuellement affiche a tous les joueurs.</p> : null}
+          {debug?.gameFallbackActive ? <p className="status">Le fallback technique est actuellement affiché à tous les joueurs.</p> : null}
           <div className="row">
             <input
               className="input"
@@ -924,7 +933,7 @@ export default function Admin() {
             <textarea
               className="input content-editor-textarea"
               rows="3"
-              placeholder="Message affiche sous le compte a rebours"
+              placeholder="Message affiché sous le compte à rebours"
               value={liveMessage}
               onChange={(e) => setLiveMessage(e.target.value)}
             />
@@ -1040,21 +1049,6 @@ export default function Admin() {
                   </div>
                 ))}
               </div>
-              <div className="panel" style={{ marginTop: 14, marginBottom: 0 }}>
-                <h2>Journal opérateur</h2>
-                <div className="admin-log-list">
-                  {(debug.adminLogs || []).length === 0 ? (
-                    <p className="hint">Aucune action opérateur récente.</p>
-                  ) : (
-                    (debug.adminLogs || []).slice().reverse().map((item) => (
-                      <div key={item.id} className="admin-log-item">
-                        <strong>{item.action}</strong>
-                        <span>{formatDateTime(item.createdAt)}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
             </>
           )}
         </section>
@@ -1063,16 +1057,16 @@ export default function Admin() {
 
       <section className="panel">
         <h2>Tirage au sort</h2>
-        <p className="hint">Palier actif: <strong>{debug?.targetLabel || "1 ligne"}</strong></p>
+        <p className="hint">Palier actif : <strong>{debug?.targetLabel || "1 ligne"}</strong></p>
         <p className="hint">
-          Gagnants prévus: <strong>{debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.quota || 1}</strong>
-          {" "}• déjà tirés: <strong>{debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.winnersCount || 0}</strong>
+          Gagnants prévus : <strong>{debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.quota || 1}</strong>
+          {" "}• déjà tirés : <strong>{debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.winnersCount || 0}</strong>
         </p>
         <div className="row">
           <input
             className="input"
             type="email"
-            placeholder="email de contribution ulule"
+            placeholder="e-mail de contribution Ulule"
             value={raffleEmail}
             onChange={(e) => setRaffleEmail(e.target.value)}
             onKeyDown={(e) => {
@@ -1106,7 +1100,7 @@ export default function Admin() {
                 <strong>{formatParticipant(entry)}</strong>
                 {entry.ulule ? (
                   <small>
-                    Ulule validé • {entry.ulule.hasReward ? "contrepartie" : "don"} • {(entry.ulule.orderTotalCents / 100).toFixed(2)}€
+                    Ulule validé • {entry.ulule.hasReward ? "contrepartie" : "don"} • {(entry.ulule.orderTotalCents / 100).toFixed(2)} €
                   </small>
                 ) : null}
               </div>
@@ -1114,10 +1108,10 @@ export default function Admin() {
           )}
         </div>
 
-        <p className="hint">Préinscrits: <strong>{raffleEntries.length}</strong></p>
+        <p className="hint">Préinscrits : <strong>{raffleEntries.length}</strong></p>
         {raffleWinners.length > 0 ? (
           <div className="status">
-            <strong>Gagnants tirés au sort:</strong>{" "}
+            <strong>Gagnants tirés au sort :</strong>{" "}
             {raffleWinners.map((winner) => formatParticipant(winner)).join(" • ")}
           </div>
         ) : null}
@@ -1164,6 +1158,24 @@ export default function Admin() {
             </section>
           ))}
         </div>
+      </section>
+
+      <section className="panel">
+        <details>
+          <summary style={{ cursor: "pointer", fontWeight: 700 }}>Journal opérateur</summary>
+          <div className="admin-log-list" style={{ marginTop: 12 }}>
+            {(debug?.adminLogs || []).length === 0 ? (
+              <p className="hint">Aucune action opérateur récente.</p>
+            ) : (
+              (debug?.adminLogs || []).slice().reverse().map((item) => (
+                <div key={item.id} className="admin-log-item">
+                  <strong>{item.action}</strong>
+                  <span>{formatDateTime(item.createdAt)}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </details>
       </section>
 
       {status && <p className="status">{status}</p>}

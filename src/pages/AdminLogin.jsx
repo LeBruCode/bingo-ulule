@@ -30,7 +30,7 @@ export default function AdminLogin() {
 
       navigate("/admin", { replace: true })
     } catch {
-      setError("Erreur reseau")
+      setError("Erreur réseau")
     } finally {
       setLoading(false)
     }

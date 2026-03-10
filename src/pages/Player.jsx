@@ -15,7 +15,7 @@ export default function Player(){
 const [card,setCard]=useState(null)
 const [state,setState]=useState(null)
 const [content,setContent]=useState({})
-const [uiSettings,setUiSettings]=useState({playerDensityMode:"lisible",playerFullscreenMode:false})
+const [uiSettings,setUiSettings]=useState({playerDensityMode:"lisible",playerFullscreenMode:false,playerMobileLayout:"text"})
 const [nowMs,setNowMs]=useState(Date.now())
 const [socketError,setSocketError]=useState("")
 const [freshCells,setFreshCells]=useState(new Set())
@@ -27,6 +27,7 @@ const [raffleFirstName,setRaffleFirstName]=useState("")
 const [raffleEmail,setRaffleEmail]=useState("")
 const [phaseBump,setPhaseBump]=useState(false)
 const [roundTransition,setRoundTransition]=useState(null)
+const [qualificationPrompt,setQualificationPrompt]=useState(null)
 const previousTriggeredRef = useRef(new Set())
 const vibrationTimeoutRef = useRef(null)
 const hapticsUnlockedRef = useRef(false)
@@ -51,6 +52,11 @@ function cssRemSetting(key,fallback,min,max){
  return `${safe}rem`
 }
 
+function cssFontWeightSetting(key,fallback){
+ const raw = String(content[key] || "").trim()
+ return raw==="300" || raw==="500" || raw==="700" ? raw : String(fallback)
+}
+
 const playerShellStyle = {
  "--player-mobile-shell-font-size": cssRemSetting("player.mobile_shell_font_size",1.125,0.95,2.4),
  "--player-mobile-title-size": cssRemSetting("player.mobile_title_size",2.15,1.4,4.8),
@@ -59,10 +65,12 @@ const playerShellStyle = {
  "--player-mobile-countdown-number-size": cssRemSetting("player.mobile_countdown_number_size",2.22,1.2,5),
  "--player-mobile-spotlight-size": cssRemSetting("player.mobile_spotlight_size",2.34,1.3,5),
  "--player-mobile-progress-size": cssRemSetting("player.mobile_progress_size",1.16,0.95,3.2),
- "--player-mobile-card-text-size": cssRemSetting("player.mobile_card_text_size",1.42,0.95,4)
+ "--player-mobile-card-text-size": cssRemSetting("player.mobile_card_text_size",1.42,0.95,4),
+ "--player-mobile-card-font-weight": cssFontWeightSetting("player.mobile_card_font_weight",500)
 }
 const densityMode = uiSettings?.playerDensityMode==="compact" || uiSettings?.playerDensityMode==="geant" ? uiSettings.playerDensityMode : "lisible"
-const playerShellClass = `player-shell player-mode-${densityMode}${uiSettings?.playerFullscreenMode ? " player-fullscreen-mode" : ""}`
+const mobileLayoutMode = uiSettings?.playerMobileLayout==="numbers" ? "numbers" : "text"
+const playerShellClass = `player-shell player-mode-${densityMode} player-mobile-layout-${mobileLayoutMode}${uiSettings?.playerFullscreenMode ? " player-fullscreen-mode" : ""}`
 
 function triggerHaptics(pattern){
  if(typeof navigator==="undefined" || typeof navigator.vibrate!=="function") return
@@ -86,7 +94,7 @@ const onToken=(t)=>{
 }
 
 const onContent=(nextContent)=>setContent(nextContent || {})
-const onUiSettings=(nextSettings)=>setUiSettings(nextSettings || {playerDensityMode:"lisible",playerFullscreenMode:false})
+const onUiSettings=(nextSettings)=>setUiSettings(nextSettings || {playerDensityMode:"lisible",playerFullscreenMode:false,playerMobileLayout:"text"})
 const onCard=(nextCard)=>setCard(nextCard)
 const onPlayerMeta=(nextMeta)=>setPlayerMeta(nextMeta || {raffleEnteredTiers:[]})
 const onState=(nextState)=>setState(nextState)
@@ -180,11 +188,6 @@ const lineGroups = Array.from({length:boardRows},(_,rowIndex)=>
 const rowMissingCounts = lineGroups.map((line)=>
  line.reduce((missing,eventName)=>missing+(state?.triggered.includes(eventName)?0:1),0)
 )
-const rowProgress = rowMissingCounts.map((missing)=>({
- missing,
- active:Math.max(0,boardCols-missing),
- ratio:boardCols>0 ? Math.max(0,Math.min(1,(boardCols-missing)/boardCols)) : 0
-}))
 const sortedMissingCounts = [...rowMissingCounts].sort((a,b)=>a-b)
 function formatTierLabel(tier,totalRows){
  if(tier===totalRows) return "carton plein"
@@ -337,20 +340,26 @@ function splitRemaining(ms){
 useEffect(()=>{
  if(!card) return
  if(!isQualifiedForCurrentTier || !currentTierProgress) return
+ if(hasEnteredCurrentTierRaffle || hasWonAnyRaffle) return
  if(winnerTierRef.current===currentTierProgress.tier) return
  winnerTierRef.current = currentTierProgress.tier
- setRaffleOpen(true)
+ setQualificationPrompt({
+  tier: currentTierProgress.tier,
+  label: formatTierLabel(currentTierProgress.tier,boardRows)
+ })
  triggerHaptics([120,60,120,60,180])
-},[isQualifiedForCurrentTier,currentTierProgress,card])
+},[isQualifiedForCurrentTier,currentTierProgress,card,hasEnteredCurrentTierRaffle,hasWonAnyRaffle,boardRows])
 
 useEffect(()=>{
  if(isQualifiedForCurrentTier) return
+ setQualificationPrompt(null)
  setRaffleOpen(false)
  setRaffleStatus("")
 },[isQualifiedForCurrentTier,currentTargetTier])
 
 useEffect(()=>{
  if(!hasWonAnyRaffle) return
+ setQualificationPrompt(null)
  setRaffleOpen(false)
  setRaffleLoading(false)
  setRaffleStatus("")
@@ -358,6 +367,7 @@ useEffect(()=>{
 
 useEffect(()=>{
  if(!hasEnteredCurrentTierRaffle) return
+ setQualificationPrompt(null)
  setRaffleOpen(false)
  setRaffleLoading(false)
  setRaffleStatus("")
@@ -371,6 +381,7 @@ useEffect(()=>{
  if(previousRoundTierRef.current===currentTargetTier) return
  const previousTier = previousRoundTierRef.current
  previousRoundTierRef.current = currentTargetTier
+ setQualificationPrompt(null)
  setRaffleOpen(false)
  setRaffleLoading(false)
  setRaffleStatus("")
@@ -535,7 +546,7 @@ return(
  <section className="game-ended-panel">
   <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
   <h2>{t("player.game_ended_title","Jeu terminé")}</h2>
-  <p>{t("player.game_ended_body","Merci a tous pour votre participation.")}</p>
+  <p>{t("player.game_ended_body","Merci à tous pour votre participation.")}</p>
  </section>
 ) : (
 <>
@@ -576,6 +587,30 @@ return(
 
 {raffleStatus && <p className="status">{raffleStatus}</p>}
 
+{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && qualificationPrompt && (
+ <div className="qualification-prompt-backdrop" aria-live="polite">
+  <div className="qualification-prompt">
+   <span className="qualification-prompt-kicker">Bravo</span>
+   <strong>Tu as {formatTierLabel(currentTierProgress.tier,boardRows)}</strong>
+   <p>
+    Tu peux maintenant participer au tirage au sort
+    {currentReward ? ` pour tenter de gagner : ${currentReward}.` : "."}
+   </p>
+   <div className="row qualification-prompt-actions">
+    <button className="btn ghost" onClick={()=>setQualificationPrompt(null)}>
+     Plus tard
+    </button>
+    <button className="btn success raffle-cta" onClick={()=>{
+      setQualificationPrompt(null)
+      setRaffleOpen(true)
+    }}>
+     Participer au tirage au sort
+    </button>
+   </div>
+  </div>
+ </div>
+)}
+
 {isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && raffleOpen && (
  <div className="raffle-modal-backdrop">
  <div className="raffle-modal">
@@ -591,13 +626,13 @@ return(
    <input
     className="input"
     type="email"
-    placeholder={t("player.modal_email","Email utilise sur Ulule")}
+    placeholder={t("player.modal_email","E-mail utilisé sur Ulule")}
     value={raffleEmail}
     onChange={(e)=>setRaffleEmail(e.target.value)}
    />
    <div className="row">
     <button className="btn ghost" onClick={()=>setRaffleOpen(false)} disabled={raffleLoading}>{t("player.modal_close","Fermer")}</button>
-    <button className="btn" onClick={submitRaffleEntry} disabled={raffleLoading}>
+    <button className="btn success" onClick={submitRaffleEntry} disabled={raffleLoading}>
      {raffleLoading ? t("player.modal_submit_loading","Vérification...") : t("player.modal_submit","Valider ma participation")}
     </button>
    </div>
@@ -614,7 +649,7 @@ return(
  return(
  <div key={i} className={"cell "+(active?"active":"")+(freshCells.has(i)?" fresh":"")}>
  <div className="cell-inner">
-  <span className="cell-label">{c}</span>
+  <span className="cell-label">{mobileLayoutMode==="numbers" ? i+1 : c}</span>
   {active && <span className="cell-badge">{t("player.cell_validated_badge","Validé")}</span>}
  </div>
  </div>
@@ -623,39 +658,20 @@ return(
 })}
 
 </div>
-
-<div className="mobile-lines">
-{lineGroups.map((line,lineIndex)=>{
- const lineStats = rowProgress[lineIndex] || {active:0,missing:boardCols,ratio:0}
- return(
- <section key={lineIndex} className="line-block">
-  <header className="line-head">
-   <div className="line-head-copy">
-    <strong>Ligne {lineIndex+1}</strong>
-    <small>{lineStats.missing===0 ? "Ligne complète" : `${lineStats.missing} case${lineStats.missing>1?"s":""} restante${lineStats.missing>1?"s":""}`}</small>
-   </div>
-   <span>{lineStats.active}/{boardCols}</span>
-  </header>
-  <div className="line-gauge" aria-hidden="true">
-   <span style={{width:`${Math.round(lineStats.ratio*100)}%`}} />
+{mobileLayoutMode==="numbers" ? (
+<div className="player-mobile-legend">
+ {card.map((eventName,index)=>{
+  const active = state?.triggered.includes(eventName)
+  const fresh = freshCells.has(index)
+  return(
+  <div key={`legend-${index}`} className={`player-mobile-legend-item${active ? " active" : ""}${fresh ? " fresh" : ""}`}>
+   <span className="player-mobile-legend-index">{index+1}</span>
+   <span className="player-mobile-legend-text">{eventName}</span>
   </div>
-
-  <div className="line-list">
-  {line.map((eventName,colIndex)=>{
-   const absoluteIndex = lineIndex*boardCols+colIndex
-   const active = state?.triggered.includes(eventName)
-   const fresh = freshCells.has(absoluteIndex)
-   return(
-   <div key={absoluteIndex} className={"line-item "+(active?"active":"")+(fresh?" fresh":"")}>
-    <span className="line-item-text">{eventName}</span>
-    {active && <span className="line-item-badge">{t("player.cell_validated_badge","Validé")}</span>}
-   </div>
-   )
-  })}
-  </div>
- </section>
- )})}
+  )
+ })}
 </div>
+) : null}
 </>
 )}
 {roundTransition ? (

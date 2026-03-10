@@ -10,7 +10,18 @@ const MOBILE_APPEARANCE_FIELDS = [
   { key: "player.mobile_countdown_number_size", label: "Compteur chiffres", hint: "Jours, heures, minutes, secondes", min: 1.2, max: 5, step: 0.01 },
   { key: "player.mobile_spotlight_size", label: "Manche en cours", hint: "Bloc de droite", min: 1.3, max: 5, step: 0.01 },
   { key: "player.mobile_progress_size", label: "Progression", hint: "A gagner, progression, statuts", min: 0.95, max: 3.2, step: 0.01 },
-  { key: "player.mobile_card_text_size", label: "Texte des cartes", hint: "Texte des cartes bingo mobile", min: 0.95, max: 4, step: 0.01 }
+  { key: "player.mobile_card_text_size", label: "Texte des cartes", hint: "Texte des cartes bingo mobile", min: 0.95, max: 4, step: 0.01 },
+  {
+    key: "player.mobile_card_font_weight",
+    label: "Graisse des cartes",
+    hint: "Poids du texte des événements sur mobile",
+    type: "select",
+    options: [
+      { value: "300", label: "300" },
+      { value: "500", label: "500" },
+      { value: "700", label: "700" }
+    ]
+  }
 ]
 
 const PLAYER_UI_FIELDS = [
@@ -28,6 +39,15 @@ const PLAYER_UI_FIELDS = [
     key: "playerFullscreenMode",
     label: "Mode plein écran épuré",
     type: "checkbox"
+  },
+  {
+    key: "playerMobileLayout",
+    label: "Cartes mobile",
+    type: "select",
+    options: [
+      { value: "text", label: "Texte direct" },
+      { value: "numbers", label: "Cases numérotées" }
+    ]
   }
 ]
 
@@ -46,7 +66,7 @@ export default function AdminContent() {
   const [uiPersisted, setUiPersisted] = useState(true)
   const [isDraggingLogo, setIsDraggingLogo] = useState(false)
   const [mobileAppearance, setMobileAppearance] = useState({})
-  const [playerUiSettings, setPlayerUiSettings] = useState({ playerDensityMode: "lisible", playerFullscreenMode: false })
+  const [playerUiSettings, setPlayerUiSettings] = useState({ playerDensityMode: "lisible", playerFullscreenMode: false, playerMobileLayout: "text" })
   const [importPayload, setImportPayload] = useState("")
 
   const sections = useMemo(() => {
@@ -100,10 +120,10 @@ export default function AdminContent() {
       )
       setPersisted(Boolean(data.persisted))
       if (uiResponse.ok && uiData.ok) {
-        setPlayerUiSettings(uiData.settings || { playerDensityMode: "lisible", playerFullscreenMode: false })
+        setPlayerUiSettings(uiData.settings || { playerDensityMode: "lisible", playerFullscreenMode: false, playerMobileLayout: "text" })
         setUiPersisted(Boolean(uiData.persisted))
       }
-      setStatus("Contenus charges")
+      setStatus("Contenus chargés")
     } finally {
       setLoading(false)
     }
@@ -117,7 +137,7 @@ export default function AdminContent() {
   function readLogoFile(file) {
     if (!file) return
     if (!file.type.startsWith("image/")) {
-      setStatus("Le logo doit etre une image")
+      setStatus("Le logo doit être une image")
       return
     }
 
@@ -129,7 +149,7 @@ export default function AdminContent() {
         return
       }
       setContent((prev) => ({ ...prev, "brand.logo_src": result }))
-      setStatus("Logo charge localement, pense a sauvegarder")
+      setStatus("Logo chargé localement, pense à sauvegarder")
     }
     reader.onerror = () => {
       setStatus("Impossible de lire cette image")
@@ -167,7 +187,7 @@ export default function AdminContent() {
       }
       setContent(data.content || {})
       setPersisted(Boolean(data.persisted))
-      setStatus(data.persisted ? "Contenus sauvegardes" : "Contenus appliques, mais non persistants tant que la table Supabase n'existe pas")
+      setStatus(data.persisted ? "Contenus sauvegardés" : "Contenus appliqués, mais non persistants tant que la table Supabase n'existe pas")
     } finally {
       setLoading(false)
     }
@@ -198,7 +218,7 @@ export default function AdminContent() {
         }, {})
       )
       setPersisted(Boolean(data.persisted))
-      setStatus("Tailles mobile enregistrees")
+      setStatus("Tailles mobile enregistrées")
     } finally {
       setLoading(false)
     }
@@ -221,7 +241,7 @@ export default function AdminContent() {
         setStatus(`Erreur réglages joueur: ${data.error || "unknown_error"}`)
         return
       }
-      setPlayerUiSettings(data.settings || { playerDensityMode: "lisible", playerFullscreenMode: false })
+      setPlayerUiSettings(data.settings || { playerDensityMode: "lisible", playerFullscreenMode: false, playerMobileLayout: "text" })
       setUiPersisted(Boolean(data.persisted))
       setStatus("Réglages joueur enregistrés")
     } finally {
@@ -288,7 +308,7 @@ export default function AdminContent() {
       <div className="admin-header">
         <div>
           <OldeupeLogo className="brand-logo admin-brand-logo" src={content["brand.logo_src"] || ""} />
-          <h1>Contenus editables</h1>
+          <h1>Contenus éditables</h1>
           <p>Modifie ici les textes visibles sans retoucher le code, y compris la source du logo original.</p>
         </div>
         <div className="row">
@@ -296,7 +316,7 @@ export default function AdminContent() {
             Retour live
           </Link>
           <button className="btn ghost" onClick={loadContent} disabled={loading}>
-            {loading ? "Chargement..." : "Rafraichir"}
+            {loading ? "Chargement..." : "Rafraîchir"}
           </button>
           <button className="btn" onClick={saveContent} disabled={loading}>
             Sauvegarder
@@ -306,7 +326,7 @@ export default function AdminContent() {
 
       {!persisted || !uiPersisted ? (
         <section className="panel">
-          <p className="status">Attention: une table Supabase de configuration manque encore. Les changements restent actifs, mais ne survivront pas a un redemarrage serveur.</p>
+          <p className="status">Attention : une table Supabase de configuration manque encore. Les changements restent actifs, mais ne survivront pas à un redémarrage serveur.</p>
         </section>
       ) : null}
 
@@ -357,15 +377,11 @@ export default function AdminContent() {
             <label key={field.key} className="content-editor-item">
               <span className="content-editor-key">{field.label}</span>
               <small className="hint">{field.hint}</small>
-              <input
-                className="input"
-                type="number"
-                min={field.min}
-                max={field.max}
-                step={field.step}
-                value={mobileAppearance[field.key] || ""}
-                onChange={(e) =>
-                  {
+              {field.type === "select" ? (
+                <select
+                  className="input"
+                  value={mobileAppearance[field.key] || field.options?.[0]?.value || ""}
+                  onChange={(e) => {
                     const nextValue = e.target.value
                     setMobileAppearance((prev) => ({
                       ...prev,
@@ -375,9 +391,37 @@ export default function AdminContent() {
                       ...prev,
                       [field.key]: nextValue
                     }))
+                  }}
+                >
+                  {(field.options || []).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="input"
+                  type="number"
+                  min={field.min}
+                  max={field.max}
+                  step={field.step}
+                  value={mobileAppearance[field.key] || ""}
+                  onChange={(e) =>
+                    {
+                      const nextValue = e.target.value
+                      setMobileAppearance((prev) => ({
+                        ...prev,
+                        [field.key]: nextValue
+                      }))
+                      setContent((prev) => ({
+                        ...prev,
+                        [field.key]: nextValue
+                      }))
+                    }
                   }
-                }
-              />
+                />
+              )}
             </label>
           ))}
         </div>
@@ -417,7 +461,7 @@ export default function AdminContent() {
             <div className="brand-editor-preview">
               <OldeupeLogo className="brand-logo admin-brand-logo" src={content["brand.logo_src"] || ""} />
               <p className="hint">
-                Glisse-depose ici l'image originale, ou clique pour la choisir. Aucun retraitement n'est applique.
+                Glisse-dépose ici l'image originale, ou clique pour la choisir. Aucun retraitement n'est appliqué.
               </p>
               <label
                 className={`brand-dropzone ${isDraggingLogo ? "dragging" : ""}`}
@@ -443,7 +487,7 @@ export default function AdminContent() {
                   type="button"
                   onClick={() => {
                     setContent((prev) => ({ ...prev, "brand.logo_src": "" }))
-                    setStatus("Logo retire localement, pense a sauvegarder")
+                    setStatus("Logo retiré localement, pense à sauvegarder")
                   }}
                 >
                   Retirer le logo

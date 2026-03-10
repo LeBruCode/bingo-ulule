@@ -62,7 +62,7 @@ export default function Overlay() {
         <h2>{t("overlay.title", "Progression Bingo Live")}</h2>
 
         <div className="overlay-meta">
-          <span>{t("overlay.events", "Evenements : {current}/{total}", { current: state?.triggered?.length || 0, total: state?.stats?.eventsTotal || 0 })}</span>
+          <span>{t("overlay.events", "Événements : {current}/{total}", { current: state?.triggered?.length || 0, total: state?.stats?.eventsTotal || 0 })}</span>
           <span>{t("overlay.players", "Joueurs : {count}", { count: state?.stats?.players || 0 })}</span>
         </div>
 
@@ -70,7 +70,7 @@ export default function Overlay() {
           {tiers.map((tier) => (
             <div key={tier.key} className={`overlay-tier ${tier.count > 0 ? "done" : ""}`}>
               <span>{tier.label}</span>
-              <strong>{tier.count > 0 ? t("overlay.tier_done", "Gagne") : t("overlay.tier_pending", "En attente")}</strong>
+              <strong>{tier.count > 0 ? t("overlay.tier_done", "Gagné") : t("overlay.tier_pending", "En attente")}</strong>
             </div>
           ))}
         </div>
@@ -78,7 +78,7 @@ export default function Overlay() {
         {nextTier ? (
           <p className="overlay-next">{t("overlay.next_tier", "Prochain palier : {label}", { label: nextTier.label })}</p>
         ) : (
-          <p className="overlay-next">{t("overlay.all_done", "Tous les paliers sont gagnes")}</p>
+          <p className="overlay-next">{t("overlay.all_done", "Tous les paliers sont gagnés")}</p>
         )}
       </div>
     </div>
