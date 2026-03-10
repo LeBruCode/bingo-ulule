@@ -111,9 +111,13 @@ let adminActionLog = []
 let milestoneWinnersPerWindow = 1
 let milestoneWinnersByWindow = new Map()
 let milestoneWonEmails = new Set()
+let milestoneSelectedWindowKey = "window_1"
 let collectiveChallenges = []
 let activeCollectiveChallenge = null
 let collectiveChallengeTimer = null
+const MILESTONE_WINDOW_SIZE_CENTS = 10000 * 100
+const MILESTONE_MAX_EUR = 600000
+const MILESTONE_WINDOW_COUNT = Math.floor(MILESTONE_MAX_EUR / 10000)
 const DEFAULT_TEXT_CONTENT = {
   "brand.logo_src": "",
   "player.title": "Bingo Live",
@@ -146,10 +150,12 @@ const DEFAULT_TEXT_CONTENT = {
   "player.raffle_button": "Participer au tirage au sort",
   "player.raffle_registered_banner": "Ta participation au tirage au sort est bien prise en compte.",
   "player.raffle_registered_status": "Tu participes au tirage au sort.",
+  "player.raffle_urgency": "Plus que {seconds} seconde{plural} pour participer.",
   "player.current_reward_label": "À gagner",
   "player.cell_validated_badge": "Validé",
   "player.progress_ready": "Éligible au tirage",
   "player.progress_closed": "Tirage terminé",
+  "player.progress_closed_message": "Le tirage au sort de cette manche a déjà eu lieu. Les inscriptions sont maintenant fermées pour ce palier. Pas grave : vous êtes peut-être encore éligible à d'autres tirages.",
   "player.progress_waiting_round": "En attente de cette manche",
   "player.progress_missing": "Il manque {missing} case{plural}",
   "player.qualified_banner": "Tu as complété {label}. Tu peux participer au tirage au sort.",
@@ -775,6 +781,7 @@ function serializeRuntimeState() {
     adminActionLog,
     activationCountByEvent: Object.fromEntries(activationCountByEvent.entries()),
     milestoneWinnersPerWindow,
+    milestoneSelectedWindowKey,
     milestoneWonEmails: [...milestoneWonEmails],
     milestoneWinnersByWindow: [...milestoneWinnersByWindow.entries()],
     collectiveChallenges,
@@ -1035,6 +1042,9 @@ function applyPendingRuntimeState() {
   milestoneWinnersPerWindow = Number.isInteger(Number(stateValue.milestoneWinnersPerWindow))
     ? Math.min(Math.max(1, Number(stateValue.milestoneWinnersPerWindow)), 50)
     : 1
+  milestoneSelectedWindowKey = typeof stateValue.milestoneSelectedWindowKey === "string" && /^window_\d+$/.test(stateValue.milestoneSelectedWindowKey)
+    ? stateValue.milestoneSelectedWindowKey
+    : "window_1"
   collectiveChallenges = normalizeChallengeDefinitions(stateValue.collectiveChallenges)
   activeCollectiveChallenge = normalizeActiveCollectiveChallenge(stateValue.activeCollectiveChallenge)
   ululeFrozenBeforeMs = Number.isFinite(Number(stateValue.ululeFrozenBeforeMs)) ? Number(stateValue.ululeFrozenBeforeMs) : null
@@ -1544,6 +1554,10 @@ function getDebugState() {
     collectiveChallenges: serializeCollectiveChallengesAdmin(),
     ulule: getUluleStatus(),
     raffle: serializeRaffleSummary(),
+    milestoneRaffles: {
+      selectedWindowKey: serializeMilestoneRaffles().selectedWindowKey,
+      winnersPerWindow: milestoneWinnersPerWindow
+    },
     progressByLine: getProgressStatsByLine(),
     winners: serializeWinnerCounts(),
     adminLogs: adminActionLog.slice(-40)
@@ -2162,7 +2176,7 @@ function serializeAllRaffleWinners() {
 }
 
 function buildMilestoneWindows() {
-  const windowSizeCents = 10000 * 100
+  const maxCents = MILESTONE_MAX_EUR * 100
   const orders = [...ululeOrderLedger.values()]
     .filter((order) => Number(order.totalCents || 0) > 0)
     .sort((a, b) => {
@@ -2173,23 +2187,26 @@ function buildMilestoneWindows() {
     })
 
   const windows = new Map()
+  for (let index = 0; index < MILESTONE_WINDOW_COUNT; index++) {
+    const startCents = index * MILESTONE_WINDOW_SIZE_CENTS
+    const key = `window_${index + 1}`
+    windows.set(key, {
+      key,
+      index: index + 1,
+      startCents,
+      endCents: startCents + MILESTONE_WINDOW_SIZE_CENTS - 1,
+      totalOrders: 0,
+      eligibleCandidatesMap: new Map(),
+      totalAmountCents: 0
+    })
+  }
   let cumulativeCents = 0
 
   for (const order of orders) {
-    const windowIndex = Math.floor(cumulativeCents / windowSizeCents)
+    if (cumulativeCents >= maxCents) break
+    const windowIndex = Math.floor(cumulativeCents / MILESTONE_WINDOW_SIZE_CENTS)
+    if (windowIndex < 0 || windowIndex >= MILESTONE_WINDOW_COUNT) break
     const windowKey = `window_${windowIndex + 1}`
-    if (!windows.has(windowKey)) {
-      const startCents = windowIndex * windowSizeCents
-      windows.set(windowKey, {
-        key: windowKey,
-        index: windowIndex + 1,
-        startCents,
-        endCents: startCents + windowSizeCents - 1,
-        totalOrders: 0,
-        eligibleCandidatesMap: new Map(),
-        totalAmountCents: 0
-      })
-    }
 
     const window = windows.get(windowKey)
     window.totalOrders += 1
@@ -2233,9 +2250,26 @@ function buildMilestoneWindows() {
 }
 
 function serializeMilestoneRaffles() {
+  const windows = buildMilestoneWindows()
+  const selectedWindow = windows.find((window) => window.key === milestoneSelectedWindowKey) || windows[0] || null
   return {
     winnersPerWindow: milestoneWinnersPerWindow,
-    windows: buildMilestoneWindows()
+    selectedWindowKey: selectedWindow?.key || "window_1",
+    maxEuro: MILESTONE_MAX_EUR,
+    windowCount: MILESTONE_WINDOW_COUNT,
+    windows
+  }
+}
+
+function serializeMilestoneStage() {
+  const milestoneRaffles = serializeMilestoneRaffles()
+  const selectedWindow = milestoneRaffles.windows.find((window) => window.key === milestoneRaffles.selectedWindowKey) || null
+  return {
+    winnersPerWindow: milestoneRaffles.winnersPerWindow,
+    selectedWindowKey: milestoneRaffles.selectedWindowKey,
+    maxEuro: milestoneRaffles.maxEuro,
+    windowCount: milestoneRaffles.windowCount,
+    selectedWindow
   }
 }
 
@@ -2991,6 +3025,29 @@ fastify.get("/api/backend-bruno/milestone-raffles", { preHandler: requireAdmin }
   }
 })
 
+fastify.post("/api/backend-bruno/milestone-raffles/select", { preHandler: requireAdmin }, async (req, reply) => {
+  const windowKey = typeof req.body?.windowKey === "string" ? req.body.windowKey.trim() : ""
+  if (!/^window_\d+$/.test(windowKey)) {
+    reply.code(400)
+    return { ok: false, error: "invalid_window_key" }
+  }
+  const milestoneRaffles = serializeMilestoneRaffles()
+  const targetWindow = milestoneRaffles.windows.find((window) => window.key === windowKey)
+  if (!targetWindow) {
+    reply.code(404)
+    return { ok: false, error: "window_not_found" }
+  }
+  milestoneSelectedWindowKey = windowKey
+  await saveRuntimeState()
+  pushAdminLog("select_milestone_raffle_window", { windowKey })
+  io.emit("state", serializeState())
+  return {
+    ok: true,
+    milestoneRaffles: serializeMilestoneRaffles(),
+    milestoneStage: serializeMilestoneStage()
+  }
+})
+
 fastify.patch("/api/backend-bruno/milestone-raffles/settings", { preHandler: requireAdmin }, async (req, reply) => {
   const winnersPerWindow = Number(req.body?.winnersPerWindow)
   if (!Number.isInteger(winnersPerWindow) || winnersPerWindow < 1 || winnersPerWindow > 50) {
@@ -3045,13 +3102,52 @@ fastify.post("/api/backend-bruno/milestone-raffles/draw", { preHandler: requireA
   }
 
   milestoneWinnersByWindow.set(windowKey, selectedWinners)
+  milestoneSelectedWindowKey = windowKey
   await saveRuntimeState()
   pushAdminLog("draw_milestone_raffle", { windowKey, winners: selectedWinners.length })
+  io.emit("state", serializeState())
   return {
     ok: true,
     winners: selectedWinners,
     window: serializeMilestoneRaffles().windows.find((window) => window.key === windowKey) || null,
-    milestoneRaffles: serializeMilestoneRaffles()
+    milestoneRaffles: serializeMilestoneRaffles(),
+    milestoneStage: serializeMilestoneStage()
+  }
+})
+
+fastify.post("/api/backend-bruno/milestone-raffles/reset", { preHandler: requireAdmin }, async (req, reply) => {
+  const windowKey = typeof req.body?.windowKey === "string" ? req.body.windowKey.trim() : ""
+  if (!/^window_\d+$/.test(windowKey)) {
+    reply.code(400)
+    return { ok: false, error: "invalid_window_key" }
+  }
+
+  const existingWinners = milestoneWinnersByWindow.get(windowKey) || []
+  for (const winner of existingWinners) {
+    const normalizedEmail = normalizeRaffleEmail(winner?.email)
+    if (normalizedEmail) {
+      milestoneWonEmails.delete(normalizedEmail)
+    }
+  }
+  milestoneWinnersByWindow.delete(windowKey)
+  if (milestoneSelectedWindowKey === windowKey) {
+    milestoneSelectedWindowKey = windowKey
+  }
+  await saveRuntimeState()
+  pushAdminLog("reset_milestone_raffle", { windowKey, removedWinners: existingWinners.length })
+  io.emit("state", serializeState())
+  return {
+    ok: true,
+    window: serializeMilestoneRaffles().windows.find((window) => window.key === windowKey) || null,
+    milestoneRaffles: serializeMilestoneRaffles(),
+    milestoneStage: serializeMilestoneStage()
+  }
+})
+
+fastify.get("/api/milestone-raffles/stage", async () => {
+  return {
+    ok: true,
+    milestoneStage: serializeMilestoneStage()
   }
 })
 

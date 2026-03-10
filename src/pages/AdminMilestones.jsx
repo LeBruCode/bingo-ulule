@@ -90,6 +90,26 @@ export default function AdminMilestones() {
     }
   }
 
+  async function selectWindow(windowKey) {
+    setLoading(true)
+    setStatus("")
+    try {
+      const { response, payload } = await fetchJson("/api/backend-bruno/milestone-raffles/select", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ windowKey })
+      })
+      if (!response.ok || !payload.ok) {
+        setStatus(`Erreur sélection tranche: ${payload.error || "unknown_error"}`)
+        return
+      }
+      setData(payload.milestoneRaffles || data)
+      setStatus(`Tranche active : ${windowKey}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="admin-shell">
       <div className="admin-header">
@@ -101,6 +121,9 @@ export default function AdminMilestones() {
         <div className="row">
           <Link className="btn ghost" to="/admin">
             Retour dashboard
+          </Link>
+          <Link className="btn ghost" to="/overlay/milestones" target="_blank" rel="noreferrer">
+            Ouvrir projection publique
           </Link>
           <button className="btn ghost" onClick={loadMilestones} disabled={loading}>
             {loading ? "Chargement..." : "Rafraîchir"}
@@ -128,6 +151,7 @@ export default function AdminMilestones() {
 
       <section className="panel">
         <h2>Tranches disponibles</h2>
+        <p className="hint">60 tranches fixes de 10 000 EUR, de 0 à 600 000 EUR. Tu peux sélectionner la tranche affichée en projection puis lancer son tirage.</p>
         <div className="admin-milestone-list">
           {(data.windows || []).length === 0 ? (
             <p className="hint">Aucune tranche disponible pour le moment.</p>
@@ -137,15 +161,27 @@ export default function AdminMilestones() {
                 <div className="admin-milestone-head">
                   <div>
                     <strong>{formatMoney(window.startCents)} → {formatMoney(window.endCents)}</strong>
-                    <span>{window.candidatesCount} candidat(s) éligible(s)</span>
+                    <span>
+                      {window.candidatesCount} candidat(s) éligible(s)
+                      {data.selectedWindowKey === window.key ? " • tranche projetée" : ""}
+                    </span>
                   </div>
-                  <button
-                    className="btn"
-                    onClick={() => drawWindow(window.key)}
-                    disabled={loading || window.winnersCount > 0 || window.candidatesCount === 0}
-                  >
-                    {window.winnersCount > 0 ? "Déjà tiré" : "Lancer le tirage"}
-                  </button>
+                  <div className="row">
+                    <button
+                      className={`btn ghost ${data.selectedWindowKey === window.key ? "active" : ""}`}
+                      onClick={() => selectWindow(window.key)}
+                      disabled={loading}
+                    >
+                      {data.selectedWindowKey === window.key ? "Tranche affichée" : "Afficher cette tranche"}
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() => drawWindow(window.key)}
+                      disabled={loading || window.winnersCount > 0 || window.candidatesCount === 0}
+                    >
+                      {window.winnersCount > 0 ? "Tirage déjà effectué" : "Lancer le tirage"}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="admin-milestone-meta">

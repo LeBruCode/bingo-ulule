@@ -25,6 +25,7 @@ const [raffleLoading,setRaffleLoading]=useState(false)
 const [raffleStatus,setRaffleStatus]=useState("")
 const [raffleFirstName,setRaffleFirstName]=useState("")
 const [raffleEmail,setRaffleEmail]=useState("")
+const [qualificationDeadlineMs,setQualificationDeadlineMs]=useState(null)
 const [phaseBump,setPhaseBump]=useState(false)
 const [roundTransition,setRoundTransition]=useState(null)
 const [qualificationPrompt,setQualificationPrompt]=useState(null)
@@ -260,6 +261,8 @@ const liveMessage = typeof content["player.live_message"]==="string" ? content["
 const raffleEnteredTiers = Array.isArray(playerMeta?.raffleEnteredTiers) ? playerMeta.raffleEnteredTiers : []
 const hasEnteredCurrentTierRaffle = raffleEnteredTiers.includes(currentTargetTier)
 const hasWonAnyRaffle = Boolean(playerMeta?.hasWonAnyRaffle)
+const isCurrentTierDrawClosed = Boolean(state?.phase?.locked)
+const qualificationCountdownSeconds = qualificationDeadlineMs ? Math.max(0,Math.ceil((qualificationDeadlineMs-nowMs)/1000)) : null
 
 function parseYouTubeVideoId(rawUrl){
  if(typeof rawUrl!=="string" || !rawUrl.trim()) return ""
@@ -340,6 +343,7 @@ function splitRemaining(ms){
 useEffect(()=>{
  if(!card) return
  if(!isQualifiedForCurrentTier || !currentTierProgress) return
+ if(isCurrentTierDrawClosed) return
  if(hasEnteredCurrentTierRaffle || hasWonAnyRaffle) return
  if(winnerTierRef.current===currentTierProgress.tier) return
  winnerTierRef.current = currentTierProgress.tier
@@ -347,14 +351,16 @@ useEffect(()=>{
   tier: currentTierProgress.tier,
   label: formatTierLabel(currentTierProgress.tier,boardRows)
  })
+ setQualificationDeadlineMs(Date.now()+30000)
  triggerHaptics([120,60,120,60,180])
-},[isQualifiedForCurrentTier,currentTierProgress,card,hasEnteredCurrentTierRaffle,hasWonAnyRaffle,boardRows])
+},[isQualifiedForCurrentTier,currentTierProgress,card,hasEnteredCurrentTierRaffle,hasWonAnyRaffle,boardRows,isCurrentTierDrawClosed])
 
 useEffect(()=>{
  if(isQualifiedForCurrentTier) return
  setQualificationPrompt(null)
  setRaffleOpen(false)
  setRaffleStatus("")
+ setQualificationDeadlineMs(null)
 },[isQualifiedForCurrentTier,currentTargetTier])
 
 useEffect(()=>{
@@ -363,6 +369,7 @@ useEffect(()=>{
  setRaffleOpen(false)
  setRaffleLoading(false)
  setRaffleStatus("")
+ setQualificationDeadlineMs(null)
 },[hasWonAnyRaffle])
 
 useEffect(()=>{
@@ -371,7 +378,20 @@ useEffect(()=>{
  setRaffleOpen(false)
  setRaffleLoading(false)
  setRaffleStatus("")
+ setQualificationDeadlineMs(null)
 },[hasEnteredCurrentTierRaffle,currentTargetTier])
+
+useEffect(()=>{
+ if(!isCurrentTierDrawClosed) return
+ const hadOpenFlow = Boolean(qualificationPrompt || raffleOpen)
+ setQualificationPrompt(null)
+ setRaffleOpen(false)
+ setRaffleLoading(false)
+ setRaffleStatus(hadOpenFlow ? t("player.progress_closed_message","Le tirage au sort de cette manche a déjà eu lieu. Les inscriptions sont maintenant fermées pour ce palier.") : "")
+ setRaffleFirstName("")
+ setRaffleEmail("")
+ setQualificationDeadlineMs(null)
+},[isCurrentTierDrawClosed,currentTargetTier,qualificationPrompt,raffleOpen])
 
 useEffect(()=>{
  if(previousRoundTierRef.current===null){
@@ -387,6 +407,7 @@ useEffect(()=>{
  setRaffleStatus("")
  setRaffleFirstName("")
  setRaffleEmail("")
+ setQualificationDeadlineMs(null)
  setRoundTransition({
   fromTier: previousTier,
   toTier: currentTargetTier,
@@ -487,7 +508,7 @@ return(
     {currentTierProgress ? (
      <small>
        {currentTierProgress.missing===0
-       ? "Ta carte est éligible au tirage"
+       ? (isCurrentTierDrawClosed ? "Tirage terminé pour cette manche" : "Ta carte est éligible au tirage")
        : `Encore ${currentTierProgress.missing} case${currentTierProgress.missing>1?"s":""} pour ce palier`}
      </small>
     ) : null}
@@ -528,7 +549,7 @@ return(
     {t("player.join_ulule_button","Voir la page Ulule")}
    </button>
   )}
-   {isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && (
+   {isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && !isCurrentTierDrawClosed && (
     <button className="btn raffle-cta" onClick={()=>setRaffleOpen(true)}>
      {t("player.raffle_button","Participer au tirage au sort")}
     </button>
@@ -564,9 +585,11 @@ return(
     {missing!==0
      ? t("player.progress_missing","Il manque {missing} case{plural}",{missing,plural:missing>1?"s":""})
      : tier<currentTargetTier
-      ? t("player.progress_closed","Tirage terminé")
-      : tier===currentTargetTier
-       ? t("player.progress_ready","Éligible au tirage")
+     ? t("player.progress_closed","Tirage terminé")
+     : tier===currentTargetTier
+       ? (isCurrentTierDrawClosed
+         ? t("player.progress_closed","Tirage terminé")
+         : t("player.progress_ready","Éligible au tirage"))
        : t("player.progress_waiting_round","En attente de cette manche")}
    </strong>
   </div>
@@ -579,15 +602,25 @@ return(
  </div>
 ) : isQualifiedForCurrentTier && currentTierProgress && (
  <div className={`winner-banner ${hasEnteredCurrentTierRaffle ? "registered" : ""}`}>
-  {hasEnteredCurrentTierRaffle
+  {isCurrentTierDrawClosed
+   ? t("player.progress_closed_message","Le tirage au sort de cette manche a déjà eu lieu. Les inscriptions sont maintenant fermées pour ce palier.")
+   : hasEnteredCurrentTierRaffle
    ? t("player.raffle_registered_banner","Ta participation au tirage au sort est bien prise en compte.")
    : t("player.qualified_banner","Tu as complété {label}. Tu peux participer au tirage au sort.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}
+  {!isCurrentTierDrawClosed && !hasEnteredCurrentTierRaffle && qualificationCountdownSeconds!==null ? (
+   <span className="winner-banner-urgency">
+    {t("player.raffle_urgency","Plus que {seconds} seconde{plural} pour participer.",{
+     seconds: qualificationCountdownSeconds,
+     plural: qualificationCountdownSeconds>1 ? "s" : ""
+    })}
+   </span>
+  ) : null}
  </div>
 )}
 
 {raffleStatus && <p className="status">{raffleStatus}</p>}
 
-{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && qualificationPrompt && (
+{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && !isCurrentTierDrawClosed && qualificationPrompt && (
  <div className="qualification-prompt-backdrop" aria-live="polite">
   <div className="qualification-prompt">
    <span className="qualification-prompt-kicker">Bravo</span>
@@ -596,6 +629,14 @@ return(
     Tu peux maintenant participer au tirage au sort
     {currentReward ? ` pour tenter de gagner : ${currentReward}.` : "."}
    </p>
+   {qualificationCountdownSeconds!==null ? (
+    <p className="qualification-prompt-urgency">
+     {t("player.raffle_urgency","Plus que {seconds} seconde{plural} pour participer.",{
+      seconds: qualificationCountdownSeconds,
+      plural: qualificationCountdownSeconds>1 ? "s" : ""
+     })}
+    </p>
+   ) : null}
    <div className="row qualification-prompt-actions">
     <button className="btn ghost" onClick={()=>setQualificationPrompt(null)}>
      Plus tard
@@ -611,11 +652,19 @@ return(
  </div>
 )}
 
-{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && raffleOpen && (
+{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && !isCurrentTierDrawClosed && raffleOpen && (
  <div className="raffle-modal-backdrop">
  <div className="raffle-modal">
    <h2>{t("player.modal_title","Participer au tirage")}</h2>
    <p>{t("player.modal_body","Tu es qualifié pour {label}. Renseigne le prénom et l'adresse e-mail utilisée pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit être d'au moins 10 EUR.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}</p>
+   {qualificationCountdownSeconds!==null ? (
+    <p className="qualification-prompt-urgency">
+     {t("player.raffle_urgency","Plus que {seconds} seconde{plural} pour participer.",{
+      seconds: qualificationCountdownSeconds,
+      plural: qualificationCountdownSeconds>1 ? "s" : ""
+     })}
+    </p>
+   ) : null}
    {raffleStatus && <p className="status">{raffleStatus}</p>}
    <input
     className="input"
