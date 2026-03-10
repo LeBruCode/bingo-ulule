@@ -94,12 +94,17 @@ let progressStatsCache = null
 let progressStatsDirty = true
 let campaignEndAtMs = Number.isFinite(Date.parse(process.env.CAMPAIGN_END_AT || "")) ? Date.parse(process.env.CAMPAIGN_END_AT) : null
 let liveStreamUrl = typeof process.env.LIVE_STREAM_URL === "string" ? process.env.LIVE_STREAM_URL.trim() : ""
+let gameEnded = false
+let runtimeStateStorageReady = false
+let pendingRuntimeState = null
+let runtimeStateSaveTimer = null
 const DEFAULT_TEXT_CONTENT = {
   "brand.logo_src": "",
   "player.title": "Bingo Live",
   "player.subtitle": "Campagne en direct",
-  "player.phase_prefix": "Palier en cours : {label}",
   "player.loading_card": "Chargement de la carte...",
+  "player.game_ended_title": "Jeu termine",
+  "player.game_ended_body": "Merci a tous pour votre participation.",
   "player.no_cards_generated": "Initialisation du bingo en cours, reessaie dans quelques secondes.",
   "player.connection_error": "Connexion indisponible temporairement.",
   "player.countdown_label": "Fin de campagne dans",
@@ -314,6 +319,9 @@ function serializeState() {
   return {
     gameVersion,
     board: serializeBoardConfig(),
+    game: {
+      ended: gameEnded
+    },
     campaign: serializeCampaign(),
     liveStream: serializeLiveStream(),
     phase: {
@@ -406,6 +414,248 @@ async function saveEditableContent(entries) {
 
   contentStorageReady = true
   return { ok: true, persisted: true }
+}
+
+function serializeRuntimeState() {
+  return {
+    rows: ROWS,
+    cols: COLS,
+    cards,
+    campaignEndAtMs,
+    liveStreamUrl,
+    gameEnded,
+    currentTargetTier,
+    winners: winners.map((set) => [...set]),
+    rewardedTokens: [...rewardedTokens],
+    playerAssignments: [...players.entries()].map(([token, player]) => ({
+      token,
+      cardIndex: player.cardIndex
+    })),
+    triggered,
+    activationSequence,
+    activationLog,
+    activationCountByEvent: Object.fromEntries(activationCountByEvent.entries()),
+    raffleEntrySeq,
+    raffleWonEmails: [...raffleWonEmails],
+    raffleEntriesByTier: raffleEntriesByTier.map((entriesMap) => [...entriesMap.values()]),
+    raffleWinnerByTier
+  }
+}
+
+function normalizeTriggeredEvents(input) {
+  if (!Array.isArray(input)) return []
+  return [...new Set(
+    input
+      .filter((value) => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value && eventNames.includes(value))
+  )]
+}
+
+function normalizePlayerAssignments(input) {
+  if (!Array.isArray(input)) return []
+  return input
+    .filter((row) => row && typeof row.token === "string" && Number.isInteger(Number(row.cardIndex)))
+    .map((row) => ({
+      token: row.token.slice(0, 120),
+      cardIndex: Number(row.cardIndex)
+    }))
+    .filter((row) => row.token && row.cardIndex >= 0)
+}
+
+function normalizeWinnerSets(input) {
+  if (!Array.isArray(input)) return createWinnerTiers()
+  return Array.from({ length: ROWS }, (_, index) => {
+    const raw = input[index]
+    if (!Array.isArray(raw)) return new Set()
+    return new Set(raw.filter((token) => typeof token === "string" && token))
+  })
+}
+
+function normalizeRaffleEntries(input) {
+  if (!Array.isArray(input)) return Array.from({ length: ROWS }, () => new Map())
+  return Array.from({ length: ROWS }, (_, index) => {
+    const rows = Array.isArray(input[index]) ? input[index] : []
+    const map = new Map()
+    for (const row of rows) {
+      if (!row || typeof row.id !== "string" || typeof row.email !== "string") continue
+      map.set(row.id, {
+        id: row.id,
+        email: normalizeRaffleEmail(row.email),
+        firstName: normalizeFirstName(row.firstName),
+        lastInitial: normalizeLastInitial(row.lastInitial),
+        playerToken: typeof row.playerToken === "string" ? row.playerToken.slice(0, 120) : "",
+        ulule: row.ulule && typeof row.ulule === "object" ? row.ulule : null,
+        source: typeof row.source === "string" ? row.source : "player",
+        createdAt: typeof row.createdAt === "string" ? row.createdAt : new Date().toISOString()
+      })
+    }
+    return map
+  })
+}
+
+function canRestorePersistedCards(stateValue) {
+  const persistedCards = stateValue?.cards
+  if (!Array.isArray(persistedCards) || persistedCards.length === 0) return false
+  const expectedSize = boardSize()
+  const eventSet = new Set(eventNames)
+  return persistedCards.every((card) =>
+    Array.isArray(card) &&
+    card.length === expectedSize &&
+    card.every((eventName) => typeof eventName === "string" && eventSet.has(eventName))
+  )
+}
+
+function setCardsFromSnapshot(snapshotCards) {
+  const nextCards = snapshotCards.map((card) => [...card])
+  const nextEventIndex = new Map()
+  for (let cardIndex = 0; cardIndex < nextCards.length; cardIndex++) {
+    const card = nextCards[cardIndex]
+    for (let position = 0; position < card.length; position++) {
+      const eventName = card[position]
+      const rowIndex = Math.floor(position / COLS)
+      const encodedImpact = cardIndex * ROWS + rowIndex
+      if (!nextEventIndex.has(eventName)) nextEventIndex.set(eventName, [])
+      nextEventIndex.get(eventName).push(encodedImpact)
+    }
+  }
+  cards = nextCards
+  eventIndex = nextEventIndex
+  initCardProgress()
+  resetGameState()
+}
+
+async function saveRuntimeState() {
+  if (runtimeStateSaveTimer) {
+    clearTimeout(runtimeStateSaveTimer)
+    runtimeStateSaveTimer = null
+  }
+  const payload = serializeRuntimeState()
+  const { error } = await supabase.from("app_state").upsert([
+    {
+      state_key: "runtime",
+      state_value: payload
+    }
+  ], { onConflict: "state_key" })
+
+  if (error) {
+    fastify.log.warn({ error }, "Runtime state save failed")
+    runtimeStateStorageReady = false
+    return { ok: false, error: "runtime_state_save_failed" }
+  }
+
+  runtimeStateStorageReady = true
+  return { ok: true }
+}
+
+function scheduleRuntimeStateSave(delayMs = 250) {
+  if (runtimeStateSaveTimer) clearTimeout(runtimeStateSaveTimer)
+  runtimeStateSaveTimer = setTimeout(() => {
+    saveRuntimeState().catch((error) => {
+      fastify.log.warn({ error }, "Deferred runtime state save failed")
+    })
+  }, delayMs)
+}
+
+async function loadRuntimeState() {
+  const { data, error } = await supabase
+    .from("app_state")
+    .select("state_value")
+    .eq("state_key", "runtime")
+    .maybeSingle()
+
+  if (error) {
+    fastify.log.warn({ error }, "Runtime state table unavailable, using in-memory state")
+    runtimeStateStorageReady = false
+    return false
+  }
+
+  runtimeStateStorageReady = true
+  const stateValue = data?.state_value
+  if (!stateValue || typeof stateValue !== "object") return true
+  pendingRuntimeState = stateValue
+
+  const nextRows = parseBoardNumber(stateValue.rows, ROWS)
+  const nextCols = parseBoardNumber(stateValue.cols, COLS)
+  ROWS = nextRows
+  COLS = nextCols
+
+  campaignEndAtMs = Number.isFinite(Number(stateValue.campaignEndAtMs)) ? Number(stateValue.campaignEndAtMs) : null
+  liveStreamUrl = typeof stateValue.liveStreamUrl === "string" ? stateValue.liveStreamUrl.trim() : ""
+  gameEnded = Boolean(stateValue.gameEnded)
+
+  return true
+}
+
+function applyPendingRuntimeState() {
+  const stateValue = pendingRuntimeState
+  pendingRuntimeState = null
+
+  if (!stateValue || typeof stateValue !== "object") return
+
+  currentTargetTier = Number.isInteger(Number(stateValue.currentTargetTier)) ? Math.min(Math.max(1, Number(stateValue.currentTargetTier)), ROWS) : 1
+
+  const nextTriggered = normalizeTriggeredEvents(stateValue.triggered)
+  triggered = nextTriggered
+  triggeredSet = new Set(nextTriggered)
+
+  activationSequence = Number.isInteger(Number(stateValue.activationSequence)) ? Math.max(0, Number(stateValue.activationSequence)) : 0
+  activationLog = Array.isArray(stateValue.activationLog)
+    ? stateValue.activationLog
+        .filter((item) => item && typeof item.event === "string" && triggeredSet.has(item.event))
+        .slice(-MAX_ACTIVATION_LOG)
+    : []
+
+  const rawCounts = stateValue.activationCountByEvent && typeof stateValue.activationCountByEvent === "object"
+    ? stateValue.activationCountByEvent
+    : {}
+  activationCountByEvent = new Map(
+    Object.entries(rawCounts)
+      .filter(([eventName, count]) => eventNames.includes(eventName) && Number.isFinite(Number(count)))
+      .map(([eventName, count]) => [eventName, Math.max(0, Number(count))])
+  )
+
+  players = new Map()
+  playersByCard = new Map()
+  for (const row of normalizePlayerAssignments(stateValue.playerAssignments)) {
+    if (row.cardIndex >= cards.length) continue
+    players.set(row.token, { cardIndex: row.cardIndex })
+    attachPlayerToCard(row.token, row.cardIndex)
+  }
+
+  winners = normalizeWinnerSets(stateValue.winners)
+  rewardedTokens = new Set(
+    Array.isArray(stateValue.rewardedTokens)
+      ? stateValue.rewardedTokens.filter((token) => typeof token === "string" && token)
+      : []
+  )
+
+  raffleEntriesByTier = normalizeRaffleEntries(stateValue.raffleEntriesByTier)
+  raffleWinnerByTier = Array.from({ length: ROWS }, (_, index) => {
+    const row = Array.isArray(stateValue.raffleWinnerByTier) ? stateValue.raffleWinnerByTier[index] : null
+    if (!row || typeof row.id !== "string" || typeof row.email !== "string") return null
+    return {
+      id: row.id,
+      email: normalizeRaffleEmail(row.email),
+      selectedAt: typeof row.selectedAt === "string" ? row.selectedAt : new Date().toISOString()
+    }
+  })
+  raffleWonEmails = new Set(
+    Array.isArray(stateValue.raffleWonEmails)
+      ? stateValue.raffleWonEmails.map((email) => normalizeRaffleEmail(email)).filter(Boolean)
+      : []
+  )
+  raffleEntrySeq = Number.isInteger(Number(stateValue.raffleEntrySeq)) ? Math.max(1, Number(stateValue.raffleEntrySeq)) : 1
+}
+
+function restoreRuntimeProgress() {
+  applyPendingRuntimeState()
+  rebuildCardProgressFromTriggered()
+  if (winners.every((set) => set.size === 0) && rewardedTokens.size === 0) {
+    recomputeWinners()
+    evaluateCurrentTierAcrossCards()
+  }
+  markProgressStatsDirty()
 }
 
 function markProgressStatsDirty() {
@@ -660,6 +910,7 @@ function ensurePlayer(token) {
   const player = { cardIndex }
   players.set(token, player)
   attachPlayerToCard(token, cardIndex)
+  scheduleRuntimeStateSave()
   return player
 }
 
@@ -684,6 +935,12 @@ async function loadEvents() {
   eventNames = events.map((e) => e.name)
   fastify.log.info({ events: eventNames.length }, "Events loaded")
 
+  if (canRestorePersistedCards(pendingRuntimeState)) {
+    setCardsFromSnapshot(pendingRuntimeState.cards)
+    fastify.log.info({ cards: cards.length }, "Cards restored from persisted runtime state")
+    return true
+  }
+
   const generated = generateCards()
   if (!generated) {
     return false
@@ -696,10 +953,12 @@ async function bootstrapGameData() {
   if (bootstrapPromise) return bootstrapPromise
 
   bootstrapPromise = (async () => {
+    await loadRuntimeState()
     const ok = await loadEvents()
     isBootstrapped = Boolean(ok && cards.length > 0)
     bootstrapError = isBootstrapped ? null : "bootstrap_failed"
     if (isBootstrapped) {
+      restoreRuntimeProgress()
       refreshConnectedPlayers()
       io.emit("state", serializeState())
     }
@@ -771,6 +1030,8 @@ function getDebugState() {
   const mandatory = events.filter((event) => event.is_mandatory).length
   return {
     gameVersion,
+    gameEnded,
+    runtimeStateStorageReady,
     ...serializeBoardConfig(),
     events: eventNames.length,
     mandatory,
@@ -1393,6 +1654,7 @@ fastify.patch("/api/backend-bruno/campaign-end", { preHandler: requireAdmin }, a
   const endAt = req.body?.endAt
   if (endAt === null || endAt === "") {
     campaignEndAtMs = null
+    await saveRuntimeState()
     io.emit("state", serializeState())
     return { ok: true, campaign: serializeCampaign() }
   }
@@ -1409,6 +1671,7 @@ fastify.patch("/api/backend-bruno/campaign-end", { preHandler: requireAdmin }, a
   }
 
   campaignEndAtMs = parsed
+  await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true, campaign: serializeCampaign() }
 })
@@ -1417,6 +1680,7 @@ fastify.patch("/api/backend-bruno/live-stream", { preHandler: requireAdmin }, as
   const url = req.body?.url
   if (url === null || url === "") {
     liveStreamUrl = ""
+    await saveRuntimeState()
     io.emit("state", serializeState())
     return { ok: true, liveStream: serializeLiveStream() }
   }
@@ -1433,6 +1697,7 @@ fastify.patch("/api/backend-bruno/live-stream", { preHandler: requireAdmin }, as
   }
 
   liveStreamUrl = normalized
+  await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true, liveStream: serializeLiveStream() }
 })
@@ -1521,6 +1786,7 @@ fastify.post("/api/backend-bruno/reload", { preHandler: requireAdmin }, async ()
       error: "reload_failed"
     }
   }
+  await saveRuntimeState()
   refreshConnectedPlayers()
   return {
     ok: true,
@@ -1568,6 +1834,7 @@ fastify.patch("/api/backend-bruno/board", { preHandler: requireAdmin }, async (r
     reply.code(400)
     return { ok: false, error: "board_generation_failed" }
   }
+  await saveRuntimeState()
   refreshConnectedPlayers()
 
   return { ok: true, board: serializeBoardConfig(), gameVersion }
@@ -1592,8 +1859,20 @@ fastify.post("/api/backend-bruno/target-tier", { preHandler: requireAdmin }, asy
   currentTargetTier = tier
   recomputeWinners()
   evaluateCurrentTierAcrossCards()
+  await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true, debug: getDebugState() }
+})
+
+fastify.post("/api/backend-bruno/game-ended", { preHandler: requireAdmin }, async (req, reply) => {
+  if (typeof req.body?.ended !== "boolean") {
+    reply.code(400)
+    return { ok: false, error: "invalid_ended" }
+  }
+  gameEnded = req.body.ended
+  await saveRuntimeState()
+  io.emit("state", serializeState())
+  return { ok: true, debug: getDebugState(), state: serializeState() }
 })
 
 fastify.get("/api/backend-bruno/raffle", { preHandler: requireAdmin }, async (req, reply) => {
@@ -1649,6 +1928,7 @@ fastify.post("/api/backend-bruno/raffle/enter", { preHandler: requireAdmin }, as
     return outcome
   }
 
+  await saveRuntimeState()
   return {
     ok: true,
     duplicated: Boolean(outcome.duplicated),
@@ -1716,6 +1996,7 @@ fastify.post("/api/raffle/enter", async (req, reply) => {
     return { ok: false, error: outcome.error || "enter_failed" }
   }
 
+  await saveRuntimeState()
   return {
     ok: true,
     duplicated: Boolean(outcome.duplicated),
@@ -1746,6 +2027,7 @@ fastify.post("/api/backend-bruno/raffle/mock", { preHandler: requireAdmin }, asy
     if (outcome.ok && !outcome.duplicated) added += 1
   }
 
+  await saveRuntimeState()
   return {
     ok: true,
     added,
@@ -1785,6 +2067,7 @@ fastify.post("/api/backend-bruno/raffle/draw", { preHandler: requireAdmin }, asy
   raffleWinnerByTier[tierIndex] = winner
   raffleWonEmails.add(selected.email)
 
+  await saveRuntimeState()
   return {
     ok: true,
     winner,
@@ -1794,6 +2077,7 @@ fastify.post("/api/backend-bruno/raffle/draw", { preHandler: requireAdmin }, asy
 
 fastify.post("/api/backend-bruno/reset-round", { preHandler: requireAdmin }, async () => {
   clearRoundProgress()
+  await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true }
 })
@@ -1833,6 +2117,7 @@ fastify.post("/api/backend-bruno/events", { preHandler: requireAdmin }, async (r
     return { ok: false, error: "reload_failed" }
   }
 
+  await saveRuntimeState()
   refreshConnectedPlayers()
   return { ok: true, gameReset: true }
 })
@@ -1876,6 +2161,7 @@ fastify.post("/api/backend-bruno/events/bulk", { preHandler: requireAdmin }, asy
     return { ok: false, error: "reload_failed" }
   }
 
+  await saveRuntimeState()
   refreshConnectedPlayers()
   return {
     ok: true,
@@ -1955,6 +2241,7 @@ fastify.patch("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, asy
       return { ok: false, error: "reload_failed" }
     }
 
+    await saveRuntimeState()
     refreshConnectedPlayers()
     return { ok: true, gameReset: true }
   }
@@ -1990,6 +2277,7 @@ fastify.delete("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, as
     return { ok: false, error: "reload_failed" }
   }
 
+  await saveRuntimeState()
   refreshConnectedPlayers()
   return { ok: true, gameReset: true }
 })
@@ -2013,6 +2301,7 @@ async function handleTrigger(req, reply) {
     return { ok: true, duplicated: true }
   }
 
+  await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true }
 }
@@ -2042,6 +2331,7 @@ fastify.post("/api/backend-bruno/events/:id/toggle", { preHandler: requireAdmin 
     return { ok: true, unchanged: true }
   }
 
+  await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true, state: serializeState(), debug: getDebugState() }
 })

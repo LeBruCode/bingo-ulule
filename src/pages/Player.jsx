@@ -147,18 +147,19 @@ const rowMissingCounts = lineGroups.map((line)=>
 )
 const sortedMissingCounts = [...rowMissingCounts].sort((a,b)=>a-b)
 function formatTierLabel(tier,totalRows){
- if(tier===totalRows) return "le carton plein"
+ if(tier===totalRows) return "carton plein"
  return `${tier} ligne${tier>1?"s":""}`
 }
 
-function formatPlayingLabel(tier,totalRows){
- return `On joue pour ${formatTierLabel(tier,totalRows)}`
+function formatTierSentenceLabel(tier,totalRows){
+ if(tier===totalRows) return "le carton plein"
+ return `${tier} ligne${tier>1?"s":""}`
 }
 
 const tierProgress = Array.from({length:boardRows},(_,index)=>{
  const tier=index+1
  const missing=sortedMissingCounts.slice(0,tier).reduce((sum,value)=>sum+value,0)
- const label=formatPlayingLabel(tier,boardRows)
+ const label=formatTierLabel(tier,boardRows)
  const shortLabel=formatTierLabel(tier,boardRows)
  return {tier,label,shortLabel,missing}
 })
@@ -180,6 +181,7 @@ const campaignEndAtMs = state?.campaign?.endAt ? Date.parse(state.campaign.endAt
 const campaignRemainingMs = campaignEndAtMs ? Math.max(0,campaignEndAtMs - nowMs) : null
 const countdownParts = campaignRemainingMs && campaignRemainingMs > 0 ? splitRemaining(campaignRemainingMs) : null
 const liveStreamUrl = state?.liveStream?.url || ""
+const gameEnded = Boolean(state?.game?.ended)
 
 function parseYouTubeVideoId(rawUrl){
  if(typeof rawUrl!=="string" || !rawUrl.trim()) return ""
@@ -350,7 +352,6 @@ return(
  <div className="player-hero">
   <div className="player-hero-copy">
    <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
-   <span className="player-kicker">{t("player.subtitle","Campagne en direct")}</span>
    <h1>{t("player.title","Bingo Live")}</h1>
    <div className="player-meta">
     <span className="player-counter">{activeCount}/{card.length} cases actives</span>
@@ -363,7 +364,7 @@ return(
   <div className="player-hero-side">
    <div className="phase-spotlight">
     <span className="phase-spotlight-label">Manche en cours</span>
-    <strong>{formatPlayingLabel(currentTargetTier,boardRows)}</strong>
+    <strong>{formatTierLabel(currentTargetTier,boardRows)}</strong>
     {currentTierProgress ? (
      <small>
        {currentTierProgress.missing===0
@@ -394,22 +395,30 @@ return(
     )}
    </div>
   )}
+ </div>
 
-  <div className="player-actions">
-   {liveStreamUrl && (
-    <button className="btn ghost raffle-cta" onClick={openLiveLink}>
-     {t("player.join_live_button","Rejoindre le live YouTube")}
-    </button>
-   )}
+ <div className="player-actions">
+  {liveStreamUrl && (
+   <button className="btn ghost raffle-cta player-live-link" onClick={openLiveLink}>
+    {t("player.join_live_button","Rejoindre le live YouTube")}
+   </button>
+  )}
    {isQualifiedForCurrentTier && currentTierProgress && (
     <button className="btn raffle-cta" onClick={()=>setRaffleOpen(true)}>
      {t("player.raffle_button","Participer au tirage au sort")}
     </button>
    )}
-  </div>
  </div>
 </div>
 
+{gameEnded ? (
+ <section className="game-ended-panel">
+  <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
+  <h2>{t("player.game_ended_title","Jeu termine")}</h2>
+  <p>{t("player.game_ended_body","Merci a tous pour votre participation.")}</p>
+ </section>
+) : (
+<>
 <div className="player-progress">
   {tierProgress.map(({tier,label,missing})=>(
   <div key={tier} className={"progress-item "+(missing===0?"done":"")+(tier===currentTargetTier?" current":"")}>
@@ -429,7 +438,7 @@ return(
 
 {isQualifiedForCurrentTier && currentTierProgress && (
  <div className="winner-banner">
-  {t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:currentTierProgress.shortLabel})}
+  {t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}
  </div>
 )}
 
@@ -439,7 +448,7 @@ return(
  <div className="raffle-modal-backdrop">
  <div className="raffle-modal">
    <h2>{t("player.modal_title","Participer au tirage")}</h2>
-   <p>{t("player.modal_body","Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",{label:currentTierProgress.shortLabel})}</p>
+   <p>{t("player.modal_body","Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}</p>
    {raffleStatus && <p className="status">{raffleStatus}</p>}
    <input
     className="input"
@@ -509,7 +518,8 @@ return(
  </section>
  )})}
 </div>
-
+</>
+)}
 </div>
 </div>
 )

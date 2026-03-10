@@ -14,12 +14,13 @@ export default function AdminContent() {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
   const [persisted, setPersisted] = useState(true)
+  const [isDraggingLogo, setIsDraggingLogo] = useState(false)
 
   const sections = useMemo(() => {
     const keys = Object.keys(content).sort((a, b) => a.localeCompare(b, "fr"))
     return CONTENT_SECTIONS.map((section) => ({
       ...section,
-      items: keys.filter((key) => key.startsWith(`${section.key}.`))
+      items: keys.filter((key) => key.startsWith(`${section.key}.`) && key !== "player.phase_prefix")
     })).filter((section) => section.items.length > 0)
   }, [content])
 
@@ -54,6 +55,36 @@ export default function AdminContent() {
     loadContent()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  function readLogoFile(file) {
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      setStatus("Le logo doit etre une image")
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : ""
+      if (!result) {
+        setStatus("Impossible de lire cette image")
+        return
+      }
+      setContent((prev) => ({ ...prev, "brand.logo_src": result }))
+      setStatus("Logo charge localement, pense a sauvegarder")
+    }
+    reader.onerror = () => {
+      setStatus("Impossible de lire cette image")
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function handleLogoDrop(event) {
+    event.preventDefault()
+    setIsDraggingLogo(false)
+    const file = event.dataTransfer?.files?.[0]
+    readLogoFile(file)
+  }
 
   async function saveContent() {
     setLoading(true)
@@ -111,20 +142,60 @@ export default function AdminContent() {
             <div className="brand-editor-preview">
               <OldeupeLogo className="brand-logo admin-brand-logo" src={content["brand.logo_src"] || ""} />
               <p className="hint">
-                Colle ici l'image originale telle quelle, sous forme d'URL directe ou de `data:` URL. Aucun retraitement n'est applique.
+                Glisse-depose ici l'image originale, ou clique pour la choisir. Aucun retraitement n'est applique.
               </p>
+              <label
+                className={`brand-dropzone ${isDraggingLogo ? "dragging" : ""}`}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setIsDraggingLogo(true)
+                }}
+                onDragLeave={() => setIsDraggingLogo(false)}
+                onDrop={handleLogoDrop}
+              >
+                <input
+                  className="brand-file-input"
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => readLogoFile(event.target.files?.[0])}
+                />
+                <strong>Glisser l'image ici</strong>
+                <span>ou cliquer pour choisir le fichier original</span>
+              </label>
+              <div className="row">
+                <button
+                  className="btn ghost"
+                  type="button"
+                  onClick={() => {
+                    setContent((prev) => ({ ...prev, "brand.logo_src": "" }))
+                    setStatus("Logo retire localement, pense a sauvegarder")
+                  }}
+                >
+                  Retirer le logo
+                </button>
+              </div>
             </div>
           ) : null}
           <div className="content-editor-list">
             {section.items.map((key) => (
               <label key={key} className="content-editor-item">
                 <span className="content-editor-key">{key}</span>
-                <textarea
-                  className="input content-editor-textarea"
-                  rows="3"
-                  value={content[key] || ""}
-                  onChange={(e) => setContent((prev) => ({ ...prev, [key]: e.target.value }))}
-                />
+                {key === "brand.logo_src" ? (
+                  <textarea
+                    className="input content-editor-textarea"
+                    rows="3"
+                    value={content[key] || ""}
+                    onChange={(e) => setContent((prev) => ({ ...prev, [key]: e.target.value }))}
+                    placeholder="L'image glissee ici apparaitra en data URL."
+                  />
+                ) : (
+                  <textarea
+                    className="input content-editor-textarea"
+                    rows="3"
+                    value={content[key] || ""}
+                    onChange={(e) => setContent((prev) => ({ ...prev, [key]: e.target.value }))}
+                  />
+                )}
               </label>
             ))}
           </div>

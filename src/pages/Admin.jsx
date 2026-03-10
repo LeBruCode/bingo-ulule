@@ -412,6 +412,26 @@ export default function Admin() {
     }
   }
 
+  async function toggleGameEnded(nextEnded) {
+    setLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/game-ended", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ended: nextEnded })
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur fin du jeu: ${data.error || "unknown_error"}`)
+        return
+      }
+      setDebug(data.debug || null)
+      setStatus(nextEnded ? "Jeu termine pour tous les joueurs" : "Jeu rouvert")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function loadRaffle(tier = debug?.targetTier || 1) {
     const { response, data } = await fetchJson(`/api/backend-bruno/raffle?tier=${tier}`)
     if (!response.ok || !data.ok) return
@@ -564,6 +584,13 @@ export default function Admin() {
             <button className="btn danger" onClick={resetRound} disabled={loading}>
               Réinitialiser la manche
             </button>
+            <button
+              className={`btn ${debug?.gameEnded ? "ghost" : "danger"}`}
+              onClick={() => toggleGameEnded(!debug?.gameEnded)}
+              disabled={loading}
+            >
+              {debug?.gameEnded ? "Réouvrir le jeu" : "Fin du jeu"}
+            </button>
           </div>
           <div className="row">
             {tierControls.map((tierItem) => (
@@ -583,6 +610,7 @@ export default function Admin() {
               {debug?.tierLocked ? " (gagnant trouvé, passe au palier suivant)" : ""}
             </p>
           ) : null}
+          {debug?.gameEnded ? <p className="status">Le jeu est actuellement termine pour tous les joueurs.</p> : null}
           <div className="row">
             <input
               className="input"
