@@ -793,8 +793,14 @@ export default function Admin() {
           <Link className="btn ghost" to="/admin/raffle">
             Vue tirage
           </Link>
+          <Link className="btn ghost" to="/admin/raffle/stage">
+            Projection tirage
+          </Link>
           <Link className="btn ghost" to="/admin/manage">
             Vue édition
+          </Link>
+          <Link className="btn ghost" to="/admin/control">
+            Pilotage mobile
           </Link>
           <Link className="btn ghost" to="/admin/content">
             Textes

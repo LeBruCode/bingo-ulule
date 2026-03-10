@@ -26,6 +26,7 @@ const [raffleStatus,setRaffleStatus]=useState("")
 const [raffleFirstName,setRaffleFirstName]=useState("")
 const [raffleEmail,setRaffleEmail]=useState("")
 const [phaseBump,setPhaseBump]=useState(false)
+const [roundTransition,setRoundTransition]=useState(null)
 const previousTriggeredRef = useRef(new Set())
 const vibrationTimeoutRef = useRef(null)
 const hapticsUnlockedRef = useRef(false)
@@ -368,13 +369,22 @@ useEffect(()=>{
   return
  }
  if(previousRoundTierRef.current===currentTargetTier) return
+ const previousTier = previousRoundTierRef.current
  previousRoundTierRef.current = currentTargetTier
  setRaffleOpen(false)
  setRaffleLoading(false)
  setRaffleStatus("")
  setRaffleFirstName("")
  setRaffleEmail("")
-},[currentTargetTier])
+ setRoundTransition({
+  fromTier: previousTier,
+  toTier: currentTargetTier,
+  label: formatTierLabel(currentTargetTier,boardRows),
+  reward: typeof content[`reward.line_${currentTargetTier}`]==="string" ? content[`reward.line_${currentTargetTier}`].trim() : ""
+ })
+ const timeout = setTimeout(()=>setRoundTransition(null),2600)
+ return ()=>clearTimeout(timeout)
+},[currentTargetTier,boardRows,content])
 
 async function submitRaffleEntry(){
  if(!currentTierProgress) return
@@ -536,7 +546,7 @@ return(
  </div>
 ) : null}
 <div className="player-progress">
-  {tierProgress.map(({tier,label,missing,ratio})=>(
+  {tierProgress.map(({tier,label,missing})=>(
   <div key={tier} className={"progress-item "+(missing===0?"done":"")+(tier===currentTargetTier?" current":"")}>
    <span>{label}</span>
    <strong>
@@ -548,9 +558,6 @@ return(
        ? t("player.progress_ready","Éligible au tirage")
        : t("player.progress_waiting_round","En attente de cette manche")}
    </strong>
-   <div className="progress-gauge" aria-hidden="true">
-    <span style={{width:`${Math.round(ratio*100)}%`}} />
-   </div>
   </div>
  ))}
 </div>
@@ -651,6 +658,18 @@ return(
 </div>
 </>
 )}
+{roundTransition ? (
+ <div className="round-transition-overlay" aria-live="polite">
+  <div className="round-transition-card">
+   <span className="round-transition-kicker">Nouvelle manche</span>
+   <strong>{roundTransition.label}</strong>
+   <p>
+    On joue maintenant pour {roundTransition.label}.
+    {roundTransition.reward ? ` À gagner : ${roundTransition.reward}` : ""}
+   </p>
+  </div>
+ </div>
+) : null}
 </div>
 </div>
 )

@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
 import useBrandLogo from "../hooks/useBrandLogo.js"
 
-export default function AdminRaffle() {
+export default function AdminRaffle({ projectionOnly = false }) {
   const navigate = useNavigate()
   const [logoSrc] = useBrandLogo()
   const [debug, setDebug] = useState(null)
@@ -44,6 +44,17 @@ export default function AdminRaffle() {
     if (!Array.isArray(stageEntries)) return []
     return stageEntries.slice(0, Math.min(5, stageEntries.length))
   }, [stageEntries])
+
+  const suspenseMessage = useMemo(() => {
+    const remaining = Array.isArray(stageEntries) ? stageEntries.length : 0
+    if (rafflePhase === "finalists" || remaining <= 5) {
+      if (remaining <= 2) return "Les 2 derniers"
+      return "Top 5 final"
+    }
+    if (remaining <= 10) return "Top 10"
+    if (remaining <= 20) return "Derniers 20"
+    return "Élimination en cours"
+  }, [rafflePhase, stageEntries])
 
   async function fetchJson(url, options = {}) {
     const response = await fetch(url, {
@@ -294,7 +305,7 @@ export default function AdminRaffle() {
   const activeTierQuota = Number(tierButtons.find((item) => item.tier === tier)?.quota || 1)
 
   return (
-    <div className="raffle-shell">
+    <div className={`raffle-shell${projectionOnly ? " raffle-shell-projection" : ""}`}>
       <header className="raffle-topbar">
         <div className="raffle-title-wrap">
           <OldeupeLogo className="brand-logo raffle-brand-logo" src={logoSrc} />
@@ -304,14 +315,19 @@ export default function AdminRaffle() {
             Palier en jeu : <strong>{debug?.targetLabel || `${tier} ligne`}</strong>
           </p>
         </div>
-        <div className="row raffle-admin-actions">
-          <Link className="btn ghost" to="/admin">
-            Retour dashboard
-          </Link>
-          <button className="btn ghost" onClick={bootstrap} disabled={loading}>
-            {loading ? "Chargement..." : "Rafraîchir"}
-          </button>
-        </div>
+        {!projectionOnly ? (
+          <div className="row raffle-admin-actions">
+            <Link className="btn ghost" to="/admin">
+              Retour dashboard
+            </Link>
+            <Link className="btn ghost" to="/admin/raffle/stage">
+              Ouvrir la projection
+            </Link>
+            <button className="btn ghost" onClick={bootstrap} disabled={loading}>
+              {loading ? "Chargement..." : "Rafraîchir"}
+            </button>
+          </div>
+        ) : null}
       </header>
 
       <section className="raffle-stage">
@@ -350,7 +366,7 @@ export default function AdminRaffle() {
                 : rafflePhase === "finalists"
                   ? `Suspense final entre ${finalists.length} candidat${finalists.length > 1 ? "s" : ""}`
                   : spinning
-                    ? `${stageEntries.length} carte${stageEntries.length > 1 ? "s" : ""} encore en lice`
+                    ? `${suspenseMessage} • ${stageEntries.length} carte${stageEntries.length > 1 ? "s" : ""} encore en lice`
                     : `${entries.length} candidat${entries.length > 1 ? "s" : ""} en attente du lancement`}
             </small>
           </div>
@@ -374,25 +390,27 @@ export default function AdminRaffle() {
           )}
         </div>
 
-        <div className="raffle-controls">
-          <div className="row raffle-tier-row">
-            {tierButtons.map((item) => (
-              <button
-                key={item.tier}
-                className={`btn ghost ${item.tier === tier ? "active" : ""} ${item.hasWinner ? "done" : ""}`}
-                onClick={() => changeTier(item.tier)}
-                disabled={loading || spinning}
-              >
-                {item.label} • {item.winnersCount}/{item.quota}
+        {!projectionOnly ? (
+          <div className="raffle-controls">
+            <div className="row raffle-tier-row">
+              {tierButtons.map((item) => (
+                <button
+                  key={item.tier}
+                  className={`btn ghost ${item.tier === tier ? "active" : ""} ${item.hasWinner ? "done" : ""}`}
+                  onClick={() => changeTier(item.tier)}
+                  disabled={loading || spinning}
+                >
+                  {item.label} • {item.winnersCount}/{item.quota}
+                </button>
+              ))}
+            </div>
+            <div className="row">
+              <button className="btn raffle-launch" onClick={drawWinner} disabled={loading || spinning || entries.length === 0 || activeTierAlreadyDrawn}>
+                {activeTierAlreadyDrawn ? `Tirage déjà effectué - ${debug?.targetLabel || `${tier} ligne`}` : `Lancer le tirage - ${debug?.targetLabel || `${tier} ligne`}`}
               </button>
-            ))}
+            </div>
           </div>
-          <div className="row">
-            <button className="btn raffle-launch" onClick={drawWinner} disabled={loading || spinning || entries.length === 0 || activeTierAlreadyDrawn}>
-              {activeTierAlreadyDrawn ? `Tirage déjà effectué - ${debug?.targetLabel || `${tier} ligne`}` : `Lancer le tirage - ${debug?.targetLabel || `${tier} ligne`}`}
-            </button>
-          </div>
-        </div>
+        ) : null}
 
         {featuredWinner ? (
           <div className="raffle-winner-banner">
@@ -410,7 +428,7 @@ export default function AdminRaffle() {
         ) : null}
       </section>
 
-      {status ? <p className="status">{status}</p> : null}
+      {!projectionOnly && status ? <p className="status">{status}</p> : null}
     </div>
   )
 }
