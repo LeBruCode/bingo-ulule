@@ -83,6 +83,7 @@ const ULULE_SYNC_AUTO_LIVE = true
 let ululeContributionByEmail = new Map()
 let ululeFrozenContributionByEmail = new Map()
 let ululeFrozenBeforeMs = null
+let ululeFrozenOrderLedger = new Map()
 let ululeOrderLedger = new Map()
 let ululeSyncTimer = null
 const ululeSyncState = {
@@ -788,6 +789,7 @@ function serializeRuntimeState() {
     activeCollectiveChallenge,
     ululeFrozenBeforeMs,
     ululeFrozenContributionByEmail: [...ululeFrozenContributionByEmail.entries()],
+    ululeFrozenOrderLedger: [...ululeFrozenOrderLedger.values()],
     ululeOrderLedger: [...ululeOrderLedger.values()],
     raffleEntrySeq,
     raffleQuotaByTier,
@@ -1049,6 +1051,7 @@ function applyPendingRuntimeState() {
   activeCollectiveChallenge = normalizeActiveCollectiveChallenge(stateValue.activeCollectiveChallenge)
   ululeFrozenBeforeMs = Number.isFinite(Number(stateValue.ululeFrozenBeforeMs)) ? Number(stateValue.ululeFrozenBeforeMs) : null
   ululeFrozenContributionByEmail = normalizeUluleContributionSnapshot(stateValue.ululeFrozenContributionByEmail)
+  ululeFrozenOrderLedger = normalizeUluleOrderLedger(stateValue.ululeFrozenOrderLedger)
   milestoneWonEmails = new Set(
     Array.isArray(stateValue.milestoneWonEmails)
       ? stateValue.milestoneWonEmails.map((email) => normalizeRaffleEmail(email)).filter(Boolean)
@@ -1892,6 +1895,7 @@ function startOfTodayMs() {
 async function freezeUluleHistorySnapshot() {
   const cutoffMs = startOfTodayMs()
   const nextFrozen = new Map(ululeFrozenContributionByEmail)
+  const nextFrozenOrders = new Map(ululeFrozenOrderLedger)
 
   for (const row of ululeContributionByEmail.values()) {
     if ((row.lastSeenMs || 0) >= cutoffMs) continue
@@ -1900,7 +1904,15 @@ async function freezeUluleHistorySnapshot() {
     nextFrozen.set(email, mergeUluleContributionRows(nextFrozen.get(email), row))
   }
 
+  for (const order of ululeOrderLedger.values()) {
+    const paidAtMs = Date.parse(order?.paidAt || "")
+    if (!Number.isFinite(paidAtMs) || paidAtMs >= cutoffMs) continue
+    if (!order?.id) continue
+    nextFrozenOrders.set(order.id, { ...order })
+  }
+
   ululeFrozenContributionByEmail = nextFrozen
+  ululeFrozenOrderLedger = nextFrozenOrders
   ululeFrozenBeforeMs = cutoffMs
 
   for (const [email, row] of ululeContributionByEmail.entries()) {
@@ -1908,16 +1920,24 @@ async function freezeUluleHistorySnapshot() {
       ululeContributionByEmail.delete(email)
     }
   }
+  for (const [orderId, order] of ululeOrderLedger.entries()) {
+    const paidAtMs = Date.parse(order?.paidAt || "")
+    if (Number.isFinite(paidAtMs) && paidAtMs < cutoffMs) {
+      ululeOrderLedger.delete(orderId)
+    }
+  }
 
   await saveRuntimeState()
   pushAdminLog("freeze_ulule_history", {
     cutoffAt: new Date(cutoffMs).toISOString(),
-    frozenEmails: ululeFrozenContributionByEmail.size
+    frozenEmails: ululeFrozenContributionByEmail.size,
+    frozenOrders: ululeFrozenOrderLedger.size
   })
   return {
     ok: true,
     cutoffAt: new Date(cutoffMs).toISOString(),
-    frozenEmails: ululeFrozenContributionByEmail.size
+    frozenEmails: ululeFrozenContributionByEmail.size,
+    frozenOrders: ululeFrozenOrderLedger.size
   }
 }
 
@@ -2052,6 +2072,8 @@ function getUluleStatus() {
     minContributionCents: ULULE_MIN_CONTRIBUTION_CENTS,
     frozenBefore: ululeFrozenBeforeMs ? new Date(ululeFrozenBeforeMs).toISOString() : null,
     frozenEligibleEmailsCached: [...ululeFrozenContributionByEmail.values()].filter((row) => row.eligible).length,
+    frozenOrdersCached: ululeFrozenOrderLedger.size,
+    liveOrdersCached: ululeOrderLedger.size,
     eligibleEmailsCached: [...ululeContributionByEmail.values()].filter((row) => row.eligible).length,
     inProgress: ululeSyncState.inProgress,
     lastSyncAt: ululeSyncState.lastSyncAt,
@@ -2177,7 +2199,11 @@ function serializeAllRaffleWinners() {
 
 function buildMilestoneWindows() {
   const maxCents = MILESTONE_MAX_EUR * 100
-  const orders = [...ululeOrderLedger.values()]
+  const mergedLedger = new Map(ululeFrozenOrderLedger)
+  for (const [orderId, order] of ululeOrderLedger.entries()) {
+    mergedLedger.set(orderId, order)
+  }
+  const orders = [...mergedLedger.values()]
     .filter((order) => Number(order.totalCents || 0) > 0)
     .sort((a, b) => {
       const left = Date.parse(a.paidAt || "") || 0
@@ -2270,6 +2296,47 @@ function serializeMilestoneStage() {
     maxEuro: milestoneRaffles.maxEuro,
     windowCount: milestoneRaffles.windowCount,
     selectedWindow
+  }
+}
+
+function getMilestoneWindowKeyFromStartEuro(startEuro) {
+  const normalized = Number(startEuro)
+  if (!Number.isInteger(normalized) || normalized < 0 || normalized >= MILESTONE_MAX_EUR) return ""
+  if (normalized % 10000 !== 0) return ""
+  const index = Math.floor(normalized / 10000) + 1
+  if (index < 1 || index > MILESTONE_WINDOW_COUNT) return ""
+  return `window_${index}`
+}
+
+function getUluleContributionTotals() {
+  const mergedLedger = new Map(ululeFrozenOrderLedger)
+  for (const [orderId, order] of ululeOrderLedger.entries()) {
+    mergedLedger.set(orderId, order)
+  }
+
+  const orders = [...mergedLedger.values()].filter((order) => Number(order.totalCents || 0) > 0)
+  const totalCents = orders.reduce((sum, order) => sum + Number(order.totalCents || 0), 0)
+  const eligibleTotalCents = orders.reduce((sum, order) => sum + (order.eligible ? Number(order.totalCents || 0) : 0), 0)
+  const windows = buildMilestoneWindows()
+  const lastNonEmptyWindow = [...windows].reverse().find((window) => window.totalOrders > 0) || null
+
+  return {
+    totalOrders: orders.length,
+    totalCents,
+    eligibleTotalCents,
+    frozenOrders: ululeFrozenOrderLedger.size,
+    liveOrders: ululeOrderLedger.size,
+    lastNonEmptyWindow: lastNonEmptyWindow
+      ? {
+          key: lastNonEmptyWindow.key,
+          index: lastNonEmptyWindow.index,
+          startCents: lastNonEmptyWindow.startCents,
+          endCents: lastNonEmptyWindow.endCents,
+          totalOrders: lastNonEmptyWindow.totalOrders,
+          totalAmountCents: lastNonEmptyWindow.totalAmountCents,
+          candidatesCount: lastNonEmptyWindow.candidatesCount
+        }
+      : null
   }
 }
 
@@ -2803,6 +2870,14 @@ fastify.get("/api/backend-bruno/ulule/status", { preHandler: requireAdmin }, asy
   return { ok: true, ulule: getUluleStatus() }
 })
 
+fastify.get("/api/backend-bruno/ulule/total", { preHandler: requireAdmin }, async () => {
+  return {
+    ok: true,
+    totals: getUluleContributionTotals(),
+    ulule: getUluleStatus()
+  }
+})
+
 fastify.post("/api/backend-bruno/ulule/live-mode", { preHandler: requireAdmin }, async (req, reply) => {
   if (typeof req.body?.enabled !== "boolean") {
     reply.code(400)
@@ -3022,6 +3097,26 @@ fastify.get("/api/backend-bruno/milestone-raffles", { preHandler: requireAdmin }
     ok: true,
     milestoneRaffles: serializeMilestoneRaffles(),
     debug: getDebugState()
+  }
+})
+
+fastify.get("/api/backend-bruno/milestone-raffles/window", { preHandler: requireAdmin }, async (req, reply) => {
+  const startEuro = Number(req.query?.startEuro)
+  const windowKey = getMilestoneWindowKeyFromStartEuro(startEuro)
+  if (!windowKey) {
+    reply.code(400)
+    return { ok: false, error: "invalid_start_euro" }
+  }
+  const milestoneRaffles = serializeMilestoneRaffles()
+  const window = milestoneRaffles.windows.find((item) => item.key === windowKey) || null
+  if (!window) {
+    reply.code(404)
+    return { ok: false, error: "window_not_found" }
+  }
+  return {
+    ok: true,
+    windowKey,
+    window
   }
 })
 
