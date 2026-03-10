@@ -23,11 +23,15 @@ const [raffleLoading,setRaffleLoading]=useState(false)
 const [raffleStatus,setRaffleStatus]=useState("")
 const [raffleFirstName,setRaffleFirstName]=useState("")
 const [raffleEmail,setRaffleEmail]=useState("")
+const [phaseBump,setPhaseBump]=useState(false)
 const previousTriggeredRef = useRef(new Set())
 const vibrationTimeoutRef = useRef(null)
 const hapticsUnlockedRef = useRef(false)
 const winnerTierRef = useRef(null)
-const previousTargetTierRef = useRef(null)
+const previousPhaseTierRef = useRef(null)
+const previousRoundTierRef = useRef(null)
+const previousPhaseMissingRef = useRef(null)
+const phaseBumpTimeoutRef = useRef(null)
 const logoSrc = typeof content["brand.logo_src"]==="string" ? content["brand.logo_src"] : ""
 
 function t(key,fallback,vars={}){
@@ -88,6 +92,9 @@ return ()=>{
  socket.off("error",onError)
  if(vibrationTimeoutRef.current){
   clearTimeout(vibrationTimeoutRef.current)
+ }
+ if(phaseBumpTimeoutRef.current){
+  clearTimeout(phaseBumpTimeoutRef.current)
  }
  window.removeEventListener("touchstart",unlockHaptics)
  window.removeEventListener("pointerdown",unlockHaptics)
@@ -167,6 +174,33 @@ const currentTargetTier = Number(state?.phase?.targetTier || 1)
 const currentTierProgress = tierProgress.find(({tier})=>tier===currentTargetTier) || null
 const currentReward = typeof content[`reward.line_${currentTargetTier}`]==="string" ? content[`reward.line_${currentTargetTier}`].trim() : ""
 
+useEffect(()=>{
+ if(!currentTierProgress){
+  previousPhaseMissingRef.current = null
+  return
+ }
+
+ const currentMissing = currentTierProgress.missing
+ const previousMissing = previousPhaseMissingRef.current
+ const previousTier = previousPhaseTierRef.current
+ previousPhaseMissingRef.current = currentMissing
+ previousPhaseTierRef.current = currentTargetTier
+
+ if(previousMissing===null || previousTier===null){
+  return
+ }
+
+ if(previousMissing===currentMissing && previousTier===currentTargetTier){
+  return
+ }
+
+ setPhaseBump(true)
+ if(phaseBumpTimeoutRef.current){
+  clearTimeout(phaseBumpTimeoutRef.current)
+ }
+ phaseBumpTimeoutRef.current = setTimeout(()=>setPhaseBump(false),820)
+},[currentTargetTier,currentTierProgress])
+
 function winnerTokensForTier(tier){
  const byLine = state?.winners?.byLine
  if(byLine && Array.isArray(byLine[`line_${tier}`])) return byLine[`line_${tier}`]
@@ -184,6 +218,7 @@ const countdownParts = campaignRemainingMs && campaignRemainingMs > 0 ? splitRem
 const liveStreamUrl = state?.liveStream?.url || ""
 const ululePageUrl = state?.liveStream?.ululeUrl || ""
 const gameEnded = Boolean(state?.game?.ended)
+const gameFallbackActive = Boolean(state?.game?.fallbackActive)
 const liveMessage = typeof content["player.live_message"]==="string" ? content["player.live_message"].trim() : ""
 
 function parseYouTubeVideoId(rawUrl){
@@ -278,12 +313,12 @@ useEffect(()=>{
 },[isQualifiedForCurrentTier,currentTargetTier])
 
 useEffect(()=>{
- if(previousTargetTierRef.current===null){
-  previousTargetTierRef.current = currentTargetTier
+ if(previousRoundTierRef.current===null){
+  previousRoundTierRef.current = currentTargetTier
   return
  }
- if(previousTargetTierRef.current===currentTargetTier) return
- previousTargetTierRef.current = currentTargetTier
+ if(previousRoundTierRef.current===currentTargetTier) return
+ previousRoundTierRef.current = currentTargetTier
  setRaffleOpen(false)
  setRaffleLoading(false)
  setRaffleStatus("")
@@ -371,9 +406,9 @@ return(
   </div>
 
   <div className="player-hero-side">
-   <div className="phase-spotlight">
-    <span className="phase-spotlight-label">Manche en cours</span>
-    <strong>{formatTierLabel(currentTargetTier,boardRows)}</strong>
+        <div className={`phase-spotlight${phaseBump ? " bump" : ""}`}>
+          <span className="phase-spotlight-label">Manche en cours</span>
+          <strong>{formatTierLabel(currentTargetTier,boardRows)}</strong>
     {currentTierProgress ? (
      <small>
        {currentTierProgress.missing===0
@@ -426,7 +461,13 @@ return(
  </div>
 </div>
 
-{gameEnded ? (
+{gameFallbackActive ? (
+ <section className="game-ended-panel">
+  <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
+  <h2>{t("player.fallback_title","Jeu indisponible")}</h2>
+  <p>{t("player.fallback_body","En raison de problemes techniques, nous ne sommes malheureusement pas en mesure de pouvoir vous proposer ce jeu. Nous vous remercions toutefois pour votre participation. A tres vite.")}</p>
+ </section>
+) : gameEnded ? (
  <section className="game-ended-panel">
   <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
   <h2>{t("player.game_ended_title","Jeu termine")}</h2>

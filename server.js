@@ -96,6 +96,7 @@ let campaignEndAtMs = Number.isFinite(Date.parse(process.env.CAMPAIGN_END_AT || 
 let liveStreamUrl = typeof process.env.LIVE_STREAM_URL === "string" ? process.env.LIVE_STREAM_URL.trim() : ""
 let ululePageUrl = typeof process.env.ULULE_PAGE_URL === "string" ? process.env.ULULE_PAGE_URL.trim() : ""
 let gameEnded = false
+let gameFallbackActive = false
 let runtimeStateStorageReady = false
 let pendingRuntimeState = null
 let runtimeStateSaveTimer = null
@@ -106,6 +107,8 @@ const DEFAULT_TEXT_CONTENT = {
   "player.loading_card": "Chargement de la carte...",
   "player.game_ended_title": "Jeu termine",
   "player.game_ended_body": "Merci a tous pour votre participation.",
+  "player.fallback_title": "Jeu indisponible",
+  "player.fallback_body": "En raison de problemes techniques, nous ne sommes malheureusement pas en mesure de pouvoir vous proposer ce jeu. Nous vous remercions toutefois pour votre participation. A tres vite.",
   "player.no_cards_generated": "Initialisation du bingo en cours, reessaie dans quelques secondes.",
   "player.connection_error": "Connexion indisponible temporairement.",
   "player.countdown_label": "Fin de campagne dans",
@@ -332,7 +335,8 @@ function serializeState() {
     gameVersion,
     board: serializeBoardConfig(),
     game: {
-      ended: gameEnded
+      ended: gameEnded,
+      fallbackActive: gameFallbackActive
     },
     campaign: serializeCampaign(),
     liveStream: serializeLiveStream(),
@@ -438,6 +442,7 @@ function serializeRuntimeState() {
     liveStreamUrl,
     ululePageUrl,
     gameEnded,
+    gameFallbackActive,
     currentTargetTier,
     winners: winners.map((set) => [...set]),
     rewardedTokens: [...rewardedTokens],
@@ -598,6 +603,7 @@ async function loadRuntimeState() {
   liveStreamUrl = typeof stateValue.liveStreamUrl === "string" ? stateValue.liveStreamUrl.trim() : ""
   ululePageUrl = typeof stateValue.ululePageUrl === "string" ? stateValue.ululePageUrl.trim() : ""
   gameEnded = Boolean(stateValue.gameEnded)
+  gameFallbackActive = Boolean(stateValue.gameFallbackActive)
 
   return true
 }
@@ -1046,6 +1052,7 @@ function getDebugState() {
   return {
     gameVersion,
     gameEnded,
+    gameFallbackActive,
     runtimeStateStorageReady,
     ...serializeBoardConfig(),
     events: eventNames.length,
@@ -1901,6 +1908,17 @@ fastify.post("/api/backend-bruno/game-ended", { preHandler: requireAdmin }, asyn
     return { ok: false, error: "invalid_ended" }
   }
   gameEnded = req.body.ended
+  await saveRuntimeState()
+  io.emit("state", serializeState())
+  return { ok: true, debug: getDebugState(), state: serializeState() }
+})
+
+fastify.post("/api/backend-bruno/game-fallback", { preHandler: requireAdmin }, async (req, reply) => {
+  if (typeof req.body?.active !== "boolean") {
+    reply.code(400)
+    return { ok: false, error: "invalid_active" }
+  }
+  gameFallbackActive = req.body.active
   await saveRuntimeState()
   io.emit("state", serializeState())
   return { ok: true, debug: getDebugState(), state: serializeState() }

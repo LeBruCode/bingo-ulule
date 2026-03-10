@@ -507,6 +507,29 @@ export default function Admin() {
     }
   }
 
+  async function toggleGameFallback(nextActive) {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/game-fallback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: nextActive })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur fallback: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setDebug(data.debug || null)
+      setStatus(nextActive ? "Mode incident active" : "Mode incident desactive")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function loadRaffle(tier = debug?.targetTier || 1) {
     const { response, data } = await fetchJson(`/api/backend-bruno/raffle?tier=${tier}`)
     if (!response.ok || !data.ok) return
@@ -666,6 +689,13 @@ export default function Admin() {
             >
               {debug?.gameEnded ? "Réouvrir le jeu" : "Fin du jeu"}
             </button>
+            <button
+              className={`btn ${debug?.gameFallbackActive ? "ghost" : "danger"}`}
+              onClick={() => toggleGameFallback(!debug?.gameFallbackActive)}
+              disabled={loading}
+            >
+              {debug?.gameFallbackActive ? "Retirer le fallback" : "Activer le fallback"}
+            </button>
           </div>
           <div className="row">
             {tierControls.map((tierItem) => (
@@ -686,6 +716,7 @@ export default function Admin() {
             </p>
           ) : null}
           {debug?.gameEnded ? <p className="status">Le jeu est actuellement termine pour tous les joueurs.</p> : null}
+          {debug?.gameFallbackActive ? <p className="status">Le fallback technique est actuellement affiche a tous les joueurs.</p> : null}
           <div className="row">
             <input
               className="input"
