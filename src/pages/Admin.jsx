@@ -109,6 +109,11 @@ export default function Admin() {
     return { response, data }
   }
 
+  function humanizeError(errorCode) {
+    if (errorCode === "cannot_decrease_tier") return "Impossible de revenir a une manche precedente."
+    return errorCode || "unknown_error"
+  }
+
   async function loadDashboard() {
     setLoading(true)
     setStatus("")
@@ -485,7 +490,7 @@ export default function Admin() {
       })
 
       if (!response.ok || !data.ok) {
-        setStatus(`Erreur palier: ${data.error || "unknown_error"}`)
+        setStatus(`Erreur palier: ${humanizeError(data.error)}`)
         return
       }
 

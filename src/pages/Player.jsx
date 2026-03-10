@@ -18,6 +18,7 @@ const [content,setContent]=useState({})
 const [nowMs,setNowMs]=useState(Date.now())
 const [socketError,setSocketError]=useState("")
 const [freshCells,setFreshCells]=useState(new Set())
+const [playerMeta,setPlayerMeta]=useState({raffleEnteredTiers:[]})
 const [raffleOpen,setRaffleOpen]=useState(false)
 const [raffleLoading,setRaffleLoading]=useState(false)
 const [raffleStatus,setRaffleStatus]=useState("")
@@ -49,14 +50,14 @@ function cssRemSetting(key,fallback,min,max){
 }
 
 const playerShellStyle = {
- "--player-mobile-shell-font-size": cssRemSetting("player.mobile_shell_font_size",1.125,0.95,1.6),
- "--player-mobile-title-size": cssRemSetting("player.mobile_title_size",2.15,1.4,3.2),
- "--player-mobile-text-size": cssRemSetting("player.mobile_text_size",1.18,0.95,1.8),
- "--player-mobile-button-size": cssRemSetting("player.mobile_button_size",1.14,0.95,1.8),
- "--player-mobile-countdown-number-size": cssRemSetting("player.mobile_countdown_number_size",2.22,1.2,3.4),
- "--player-mobile-spotlight-size": cssRemSetting("player.mobile_spotlight_size",2.34,1.3,3.4),
- "--player-mobile-progress-size": cssRemSetting("player.mobile_progress_size",1.16,0.95,1.8),
- "--player-mobile-card-text-size": cssRemSetting("player.mobile_card_text_size",1.42,0.95,2.2)
+ "--player-mobile-shell-font-size": cssRemSetting("player.mobile_shell_font_size",1.125,0.95,2.4),
+ "--player-mobile-title-size": cssRemSetting("player.mobile_title_size",2.15,1.4,4.8),
+ "--player-mobile-text-size": cssRemSetting("player.mobile_text_size",1.18,0.95,3.2),
+ "--player-mobile-button-size": cssRemSetting("player.mobile_button_size",1.14,0.95,3.2),
+ "--player-mobile-countdown-number-size": cssRemSetting("player.mobile_countdown_number_size",2.22,1.2,5),
+ "--player-mobile-spotlight-size": cssRemSetting("player.mobile_spotlight_size",2.34,1.3,5),
+ "--player-mobile-progress-size": cssRemSetting("player.mobile_progress_size",1.16,0.95,3.2),
+ "--player-mobile-card-text-size": cssRemSetting("player.mobile_card_text_size",1.42,0.95,4)
 }
 
 function triggerHaptics(pattern){
@@ -82,6 +83,7 @@ const onToken=(t)=>{
 
 const onContent=(nextContent)=>setContent(nextContent || {})
 const onCard=(nextCard)=>setCard(nextCard)
+const onPlayerMeta=(nextMeta)=>setPlayerMeta(nextMeta || {raffleEnteredTiers:[]})
 const onState=(nextState)=>setState(nextState)
 const onError=(errorCode)=>{
  if(errorCode==="no_cards_generated"){
@@ -98,6 +100,7 @@ const onError=(errorCode)=>{
 socket.on("token",onToken)
 socket.on("content",onContent)
 socket.on("card",onCard)
+socket.on("player-meta",onPlayerMeta)
 socket.on("state",onState)
 socket.on("error",onError)
 
@@ -105,6 +108,7 @@ return ()=>{
  socket.off("token",onToken)
  socket.off("content",onContent)
  socket.off("card",onCard)
+ socket.off("player-meta",onPlayerMeta)
  socket.off("state",onState)
  socket.off("error",onError)
  if(vibrationTimeoutRef.current){
@@ -237,6 +241,8 @@ const ululePageUrl = state?.liveStream?.ululeUrl || ""
 const gameEnded = Boolean(state?.game?.ended)
 const gameFallbackActive = Boolean(state?.game?.fallbackActive)
 const liveMessage = typeof content["player.live_message"]==="string" ? content["player.live_message"].trim() : ""
+const raffleEnteredTiers = Array.isArray(playerMeta?.raffleEnteredTiers) ? playerMeta.raffleEnteredTiers : []
+const hasEnteredCurrentTierRaffle = raffleEnteredTiers.includes(currentTargetTier)
 
 function parseYouTubeVideoId(rawUrl){
  if(typeof rawUrl!=="string" || !rawUrl.trim()) return ""
@@ -330,6 +336,13 @@ useEffect(()=>{
 },[isQualifiedForCurrentTier,currentTargetTier])
 
 useEffect(()=>{
+ if(!hasEnteredCurrentTierRaffle) return
+ setRaffleOpen(false)
+ setRaffleLoading(false)
+ setRaffleStatus("")
+},[hasEnteredCurrentTierRaffle,currentTargetTier])
+
+useEffect(()=>{
  if(previousRoundTierRef.current===null){
   previousRoundTierRef.current = currentTargetTier
   return
@@ -372,10 +385,6 @@ async function submitRaffleEntry(){
     setRaffleStatus(t("player.error_not_ulule_eligible","Aucune contribution eligible n'a ete trouvee pour cet email sur Ulule. Verifie que l'email est correct, ou contribue avec cet email avec une contrepartie ou un don d'au moins 10 EUR."))
     return
    }
-   if(data.error==="already_won"){
-    setRaffleStatus(t("player.error_already_won","Cet email a deja gagne."))
-    return
-   }
    if(data.error==="not_qualified_for_tier"){
     setRaffleStatus(t("player.error_not_qualified","Ta qualification n'est plus active pour ce palier."))
     return
@@ -387,6 +396,10 @@ async function submitRaffleEntry(){
    ? t("player.success_duplicate","Email deja inscrit pour ce palier.")
    : t("player.success_validated","Inscription au tirage validee.")
   )
+  setPlayerMeta((prev)=>({
+   ...prev,
+   raffleEnteredTiers:[...new Set([...(Array.isArray(prev?.raffleEnteredTiers)?prev.raffleEnteredTiers:[]),currentTierProgress.tier])]
+  }))
   setRaffleOpen(false)
  }finally{
   setRaffleLoading(false)
@@ -470,7 +483,7 @@ return(
     {t("player.join_ulule_button","Voir la page Ulule")}
    </button>
   )}
-   {isQualifiedForCurrentTier && currentTierProgress && (
+   {isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && (
     <button className="btn raffle-cta" onClick={()=>setRaffleOpen(true)}>
      {t("player.raffle_button","Participer au tirage au sort")}
     </button>
@@ -517,13 +530,15 @@ return(
 
 {isQualifiedForCurrentTier && currentTierProgress && (
  <div className="winner-banner">
-  {t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}
+  {hasEnteredCurrentTierRaffle
+   ? t("player.raffle_registered_banner","Ta participation au tirage au sort est bien prise en compte.")
+   : t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}
  </div>
 )}
 
 {raffleStatus && <p className="status">{raffleStatus}</p>}
 
-{isQualifiedForCurrentTier && currentTierProgress && raffleOpen && (
+{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && raffleOpen && (
  <div className="raffle-modal-backdrop">
  <div className="raffle-modal">
    <h2>{t("player.modal_title","Participer au tirage")}</h2>

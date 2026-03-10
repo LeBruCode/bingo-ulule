@@ -3,14 +3,14 @@ import { Link, useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
 
 const MOBILE_APPEARANCE_FIELDS = [
-  { key: "player.mobile_shell_font_size", label: "Base mobile", hint: "Texte global mobile", min: 0.95, max: 1.6, step: 0.01 },
-  { key: "player.mobile_title_size", label: "Titre", hint: "Titre principal Bingo Live", min: 1.4, max: 3.2, step: 0.01 },
-  { key: "player.mobile_text_size", label: "Texte courant", hint: "Paragraphes, labels et messages", min: 0.95, max: 1.8, step: 0.01 },
-  { key: "player.mobile_button_size", label: "Boutons", hint: "CTA et boutons mobile", min: 0.95, max: 1.8, step: 0.01 },
-  { key: "player.mobile_countdown_number_size", label: "Compteur chiffres", hint: "Jours, heures, minutes, secondes", min: 1.2, max: 3.4, step: 0.01 },
-  { key: "player.mobile_spotlight_size", label: "Manche en cours", hint: "Bloc de droite", min: 1.3, max: 3.4, step: 0.01 },
-  { key: "player.mobile_progress_size", label: "Progression", hint: "A gagner, progression, statuts", min: 0.95, max: 1.8, step: 0.01 },
-  { key: "player.mobile_card_text_size", label: "Texte des cartes", hint: "Texte des cartes bingo mobile", min: 0.95, max: 2.2, step: 0.01 }
+  { key: "player.mobile_shell_font_size", label: "Base mobile", hint: "Texte global mobile", min: 0.95, max: 2.4, step: 0.01 },
+  { key: "player.mobile_title_size", label: "Titre", hint: "Titre principal Bingo Live", min: 1.4, max: 4.8, step: 0.01 },
+  { key: "player.mobile_text_size", label: "Texte courant", hint: "Paragraphes, labels et messages", min: 0.95, max: 3.2, step: 0.01 },
+  { key: "player.mobile_button_size", label: "Boutons", hint: "CTA et boutons mobile", min: 0.95, max: 3.2, step: 0.01 },
+  { key: "player.mobile_countdown_number_size", label: "Compteur chiffres", hint: "Jours, heures, minutes, secondes", min: 1.2, max: 5, step: 0.01 },
+  { key: "player.mobile_spotlight_size", label: "Manche en cours", hint: "Bloc de droite", min: 1.3, max: 5, step: 0.01 },
+  { key: "player.mobile_progress_size", label: "Progression", hint: "A gagner, progression, statuts", min: 0.95, max: 3.2, step: 0.01 },
+  { key: "player.mobile_card_text_size", label: "Texte des cartes", hint: "Texte des cartes bingo mobile", min: 0.95, max: 4, step: 0.01 }
 ]
 
 const CONTENT_SECTIONS = [

@@ -129,6 +129,8 @@ const DEFAULT_TEXT_CONTENT = {
   "player.mobile_progress_size": "1.16",
   "player.mobile_card_text_size": "1.42",
   "player.raffle_button": "Participer au tirage au sort",
+  "player.raffle_registered_banner": "Ta participation au tirage au sort est bien prise en compte.",
+  "player.raffle_registered_status": "Tu participes au tirage au sort.",
   "player.current_reward_label": "A gagner",
   "player.cell_validated_badge": "Validé",
   "player.progress_ready": "Eligible au tirage",
@@ -146,7 +148,6 @@ const DEFAULT_TEXT_CONTENT = {
   "player.error_missing_fields": "Merci de remplir ton prenom et l'email utilise pour ta contribution Ulule.",
   "player.error_not_ulule_eligible": "Aucune contribution eligible n'a ete trouvee pour cet email sur Ulule. Verifie que l'email est correct, ou contribue avec cet email avec une contrepartie ou un don d'au moins 10 EUR.",
   "player.error_contribution_too_low": "Une contribution existe bien pour cet email sur Ulule, mais son montant est inferieur a 10 EUR. Pour participer au tirage, la contribution ou le don doit etre d'au moins 10 EUR.",
-  "player.error_already_won": "Cet email a deja gagne.",
   "player.error_not_qualified": "Ta qualification n'est plus active pour ce palier.",
   "player.error_generic": "Erreur : {error}",
   "player.success_duplicate": "Email deja inscrit pour ce palier.",
@@ -1030,6 +1031,7 @@ io.on("connection", (socket) => {
   socket.emit("content", serializeContent())
   socket.emit("token", token)
   socket.emit("card", cards[player.cardIndex])
+  socket.emit("player-meta", serializePlayerMeta(token))
   socket.emit("state", serializeState())
 })
 
@@ -1039,7 +1041,16 @@ function refreshConnectedPlayers() {
     if (!token) continue
     const player = ensurePlayer(token)
     socket.emit("card", cards[player.cardIndex])
+    socket.emit("player-meta", serializePlayerMeta(token))
     socket.emit("state", serializeState())
+  }
+}
+
+function emitPlayerMetaForToken(playerToken) {
+  if (typeof playerToken !== "string" || !playerToken) return
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data?.token !== playerToken) continue
+    socket.emit("player-meta", serializePlayerMeta(playerToken))
   }
 }
 
@@ -1559,6 +1570,28 @@ function serializeRaffleSummary() {
   }
 }
 
+function getEnteredTiersForPlayerToken(playerToken) {
+  if (typeof playerToken !== "string" || !playerToken) return []
+  const enteredTiers = []
+  for (let tier = 1; tier <= ROWS; tier++) {
+    const entriesMap = raffleEntriesByTier[tier - 1]
+    if (!entriesMap) continue
+    for (const entry of entriesMap.values()) {
+      if (entry.playerToken === playerToken) {
+        enteredTiers.push(tier)
+        break
+      }
+    }
+  }
+  return enteredTiers
+}
+
+function serializePlayerMeta(playerToken) {
+  return {
+    raffleEnteredTiers: getEnteredTiersForPlayerToken(playerToken)
+  }
+}
+
 function normalizeFirstName(value) {
   if (typeof value !== "string") return ""
   return value.trim().slice(0, 80)
@@ -1569,10 +1602,6 @@ function addRaffleEntry({ tier, email, source = "manual", ulule = null, firstNam
   const entriesMap = raffleEntriesByTier[tierIndex]
   const normalizedEmail = normalizeRaffleEmail(email)
   if (!normalizedEmail) return { ok: false, error: "invalid_email" }
-
-  if (raffleWonEmails.has(normalizedEmail)) {
-    return { ok: false, error: "already_won" }
-  }
 
   for (const existing of entriesMap.values()) {
     if (existing.email === normalizedEmail) {
@@ -1986,6 +2015,7 @@ fastify.post("/api/backend-bruno/raffle/enter", { preHandler: requireAdmin }, as
   }
 
   await saveRuntimeState()
+  emitPlayerMetaForToken(req.body?.token)
   return {
     ok: true,
     duplicated: Boolean(outcome.duplicated),
@@ -2054,6 +2084,7 @@ fastify.post("/api/raffle/enter", async (req, reply) => {
   }
 
   await saveRuntimeState()
+  emitPlayerMetaForToken(playerToken)
   return {
     ok: true,
     duplicated: Boolean(outcome.duplicated),
@@ -2109,20 +2140,13 @@ fastify.post("/api/backend-bruno/raffle/draw", { preHandler: requireAdmin }, asy
     return { ok: true, alreadyDrawn: true, raffle: serializeRaffleTier(tier) }
   }
 
-  const eligible = entries.filter((entry) => !raffleWonEmails.has(entry.email))
-  if (eligible.length === 0) {
-    reply.code(400)
-    return { ok: false, error: "no_eligible_entries" }
-  }
-
-  const selected = eligible[Math.floor(Math.random() * eligible.length)]
+  const selected = entries[Math.floor(Math.random() * entries.length)]
   const winner = {
     id: selected.id,
     email: selected.email,
     selectedAt: new Date().toISOString()
   }
   raffleWinnerByTier[tierIndex] = winner
-  raffleWonEmails.add(selected.email)
 
   await saveRuntimeState()
   return {

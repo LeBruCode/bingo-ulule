@@ -1332,65 +1332,80 @@ body.overlay-mode #root {
   font-size: 0.96rem;
 }
 
-.raffle-slot {
+.raffle-hero-card:not(.spinning):not(.winner) strong {
+  font-size: clamp(1.8rem, 4.8vw, 3.2rem);
+  color: #e2e8f0;
+}
+
+.raffle-grid {
   position: relative;
   z-index: 1;
   margin-top: 18px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.raffle-slot-item {
+.raffle-grid.finalists {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.raffle-grid.winner {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 460px;
+}
+
+.raffle-grid-card {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
+  border-radius: 20px;
   background: rgba(15, 23, 42, 0.62);
   color: #e2e8f0;
-  padding: 14px 16px;
-  transition: 0.2s ease;
-  display: flex;
-  align-items: center;
+  padding: 16px 16px 18px;
+  transition: 0.22s ease;
+  display: grid;
   gap: 12px;
-  min-height: 76px;
+  min-height: 120px;
   backdrop-filter: blur(10px);
+  align-content: space-between;
 }
 
-.raffle-slot-rank {
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
+.raffle-grid-chip {
+  width: fit-content;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #94a3b8;
-  font-size: 0.76rem;
+  color: #cbd5e1;
+  padding: 6px 10px;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-.raffle-slot-item strong {
-  font-size: clamp(1rem, 2vw, 1.45rem);
+.raffle-grid-card strong {
+  font-size: clamp(1rem, 1.8vw, 1.38rem);
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.18;
 }
 
-.raffle-slot-item.center {
+.raffle-grid-card.focus {
   border-color: rgba(96, 165, 250, 0.55);
   background: rgba(30, 64, 175, 0.18);
   color: #eff6ff;
-  transform: translateY(-3px) scale(1.02);
+  transform: translateY(-4px) scale(1.02);
   box-shadow: 0 18px 35px rgba(37, 99, 235, 0.16);
 }
 
-.raffle-slot-item.center .raffle-slot-rank {
-  background: rgba(96, 165, 250, 0.18);
-  color: #dbeafe;
+.raffle-grid-card.finalist {
+  border-color: rgba(251, 191, 36, 0.42);
+  background: rgba(120, 53, 15, 0.2);
+  box-shadow: 0 16px 34px rgba(245, 158, 11, 0.12);
 }
 
-.raffle-slot-item.winner {
+.raffle-grid-card.winner {
   border-color: rgba(251, 191, 36, 0.6);
   background: rgba(245, 158, 11, 0.18);
   color: #fef3c7;
@@ -1421,6 +1436,30 @@ body.overlay-mode #root {
 
 .raffle-tier-row .btn {
   border-radius: 999px;
+}
+
+.raffle-tier-row .btn.active {
+  border-color: rgba(251, 191, 36, 0.72);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.26), rgba(249, 115, 22, 0.18));
+  color: #fff7ed;
+  box-shadow:
+    0 0 0 1px rgba(251, 191, 36, 0.18),
+    0 12px 26px rgba(249, 115, 22, 0.16);
+  transform: translateY(-1px);
+}
+
+.raffle-tier-row .btn.done {
+  opacity: 0.62;
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.44);
+  text-decoration: line-through;
+}
+
+.raffle-tier-row .btn.done.active {
+  opacity: 1;
+  color: #fff7ed;
+  text-decoration: none;
 }
 
 .raffle-launch {
@@ -1461,6 +1500,13 @@ body.overlay-mode #root {
   font-size: clamp(1.6rem, 3vw, 2.8rem);
   line-height: 1;
   letter-spacing: -0.04em;
+}
+
+.raffle-winner-banner p {
+  margin: 6px 0 0;
+  color: #fff7ed;
+  font-size: 1.08rem;
+  line-height: 1.5;
 }
 
 @keyframes raffleBlink {
@@ -2034,7 +2080,9 @@ body.overlay-mode #root {
     width: 100%;
   }
 
-  .raffle-slot {
+  .raffle-grid,
+  .raffle-grid.finalists,
+  .raffle-grid.winner {
     grid-template-columns: 1fr;
   }
 
