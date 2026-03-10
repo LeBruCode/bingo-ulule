@@ -552,6 +552,32 @@ export default function Admin() {
     }
   }
 
+  async function fullSyncUluleHistory() {
+    setLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/ulule/full-sync", {
+        method: "POST"
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur full sync Ulule : ${data.result?.error || data.error || "unknown_error"}`)
+        return
+      }
+      setDebug((prev) =>
+        prev
+          ? {
+              ...prev,
+              ulule: data.ulule,
+              milestoneRaffles: prev.milestoneRaffles
+            }
+          : prev
+      )
+      setStatus(`Full sync Ulule terminé : ${data.result?.scannedOrders || 0} commandes scannées, total reconstruit ${(Number(data.totals?.totalCents || 0) / 100).toFixed(2)} EUR`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function saveTierRewards() {
     setLoading(true)
     setStatus("")
@@ -1044,6 +1070,9 @@ export default function Admin() {
                 <div><strong>{debug.ulule?.frozenEligibleEmailsCached || 0}</strong><span>e-mails figés Ulule</span></div>
               </div>
               <div className="row" style={{ marginTop: 14 }}>
+                <button className="btn ghost" onClick={fullSyncUluleHistory} disabled={loading}>
+                  Recharger tout l’historique Ulule
+                </button>
                 <button className="btn ghost" onClick={freezeUluleHistory} disabled={loading}>
                   Figer l’historique Ulule
                 </button>

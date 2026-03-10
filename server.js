@@ -2059,6 +2059,13 @@ async function syncUluleBackfill({ reason = "startup_backfill" } = {}) {
   })
 }
 
+async function syncUluleFullHistory({ reason = "manual_full_sync" } = {}) {
+  return syncUluleWindow({
+    reason,
+    sinceMs: 0
+  })
+}
+
 function getUluleStatus() {
   return {
     configured: isUluleConfigured(),
@@ -2338,6 +2345,14 @@ function getUluleContributionTotals() {
         }
       : null
   }
+}
+
+function buildMilestoneWindowsFromStartEuro(startEuro) {
+  const startKey = getMilestoneWindowKeyFromStartEuro(startEuro)
+  if (!startKey) return []
+  const startIndex = Number(startKey.replace("window_", "")) - 1
+  if (!Number.isInteger(startIndex) || startIndex < 0) return []
+  return buildMilestoneWindows().slice(startIndex)
 }
 
 function getEnteredTiersForPlayerToken(playerToken) {
@@ -2875,6 +2890,39 @@ fastify.get("/api/backend-bruno/ulule/total", { preHandler: requireAdmin }, asyn
     ok: true,
     totals: getUluleContributionTotals(),
     ulule: getUluleStatus()
+  }
+})
+
+fastify.post("/api/backend-bruno/ulule/full-sync", { preHandler: requireAdmin }, async () => {
+  const result = await syncUluleFullHistory({ reason: "manual_full_sync" })
+  scheduleUluleSync(currentUluleIntervalMs())
+  if (result.ok) {
+    await saveRuntimeState()
+    pushAdminLog("ulule_full_sync", {
+      updatedOrders: result.updatedOrders || 0,
+      scannedOrders: result.scannedOrders || 0
+    })
+  }
+  return {
+    ok: Boolean(result.ok),
+    result,
+    totals: getUluleContributionTotals(),
+    ulule: getUluleStatus()
+  }
+})
+
+fastify.get("/api/backend-bruno/milestone-raffles/rebuild-from", { preHandler: requireAdmin }, async (req, reply) => {
+  const startEuro = Number(req.query?.startEuro)
+  const startKey = getMilestoneWindowKeyFromStartEuro(startEuro)
+  if (!startKey) {
+    reply.code(400)
+    return { ok: false, error: "invalid_start_euro" }
+  }
+  return {
+    ok: true,
+    startEuro,
+    currentTotal: getUluleContributionTotals(),
+    windows: buildMilestoneWindowsFromStartEuro(startEuro)
   }
 })
 
