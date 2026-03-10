@@ -62,6 +62,20 @@ body.overlay-mode #root {
   filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.18));
 }
 
+.brand-wordmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  padding: 14px 18px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .container {
   max-width: 900px;
   margin: auto;
@@ -167,14 +181,6 @@ body.overlay-mode #root {
   font-weight: 700;
   font-size: 0.84rem;
   letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.campaign-countdown-sub {
-  margin: 0;
-  color: rgba(226, 232, 240, 0.72);
-  font-size: 0.9rem;
-  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -1513,6 +1519,12 @@ body.overlay-mode #root {
   gap: 14px;
 }
 
+.brand-editor-preview {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
 .content-editor-item {
   display: grid;
   gap: 8px;
@@ -1624,11 +1636,6 @@ body.overlay-mode #root {
 
   .countdown-cell strong {
     font-size: 1.65rem;
-  }
-
-  .campaign-countdown-sub {
-    font-size: 0.76rem;
-    letter-spacing: 0.06em;
   }
 
   .progress-item {

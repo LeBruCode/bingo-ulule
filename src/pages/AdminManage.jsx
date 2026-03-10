@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
+import useBrandLogo from "../hooks/useBrandLogo.js"
 
 const DEFAULT_CATEGORIES = ["coulisses", "creative", "chat", "public", "dons", "general"]
 
 export default function AdminManage() {
   const navigate = useNavigate()
+  const [logoSrc] = useBrandLogo()
   const [events, setEvents] = useState([])
   const [newEventName, setNewEventName] = useState("")
   const [bulkEventNames, setBulkEventNames] = useState("")
@@ -230,7 +232,7 @@ export default function AdminManage() {
     <div className="admin-shell">
       <div className="admin-header">
         <div>
-          <OldeupeLogo className="brand-logo admin-brand-logo" />
+          <OldeupeLogo className="brand-logo admin-brand-logo" src={logoSrc} />
           <h1>Édition des événements</h1>
           <p>Ajoute, renomme et recatégorise les événements.</p>
         </div>

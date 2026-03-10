@@ -74,7 +74,7 @@ const ULULE_PROJECT_ID = process.env.ULULE_PROJECT_ID || ""
 const ULULE_MIN_CONTRIBUTION_CENTS = 1000
 const ULULE_LONG_CACHE_DAYS = 40
 const ULULE_DELTA_HOURS = 4
-const ULULE_SYNC_INTERVAL_LIVE_MS = 30000
+const ULULE_SYNC_INTERVAL_LIVE_MS = 15000
 const ULULE_SYNC_INTERVAL_IDLE_MS = 10 * 60 * 1000
 const ULULE_SYNC_MAX_PAGES = 20
 const ULULE_SYNC_AUTO_LIVE = true
@@ -95,6 +95,7 @@ let progressStatsDirty = true
 let campaignEndAtMs = Number.isFinite(Date.parse(process.env.CAMPAIGN_END_AT || "")) ? Date.parse(process.env.CAMPAIGN_END_AT) : null
 let liveStreamUrl = typeof process.env.LIVE_STREAM_URL === "string" ? process.env.LIVE_STREAM_URL.trim() : ""
 const DEFAULT_TEXT_CONTENT = {
+  "brand.logo_src": "",
   "player.title": "Bingo Live",
   "player.subtitle": "Campagne en direct",
   "player.phase_prefix": "Palier en cours : {label}",
@@ -110,6 +111,8 @@ const DEFAULT_TEXT_CONTENT = {
   "player.join_live_button": "Rejoindre le live YouTube",
   "player.raffle_button": "Participer au tirage au sort",
   "player.progress_ready": "Eligible au tirage",
+  "player.progress_closed": "Tirage termine",
+  "player.progress_waiting_round": "En attente de cette manche",
   "player.progress_missing": "Il manque {missing} case{plural}",
   "player.qualified_banner": "Tu as complete {label}. Tu peux participer au tirage au sort.",
   "player.modal_title": "Participer au tirage",
@@ -347,6 +350,13 @@ function serializeLiveStream() {
 
 function serializeContent() {
   return { ...DEFAULT_TEXT_CONTENT, ...editableContent }
+}
+
+function serializeBranding() {
+  const content = serializeContent()
+  return {
+    logoSrc: typeof content["brand.logo_src"] === "string" && content["brand.logo_src"].trim() ? content["brand.logo_src"].trim() : null
+  }
 }
 
 async function loadEditableContent() {
@@ -1114,22 +1124,22 @@ function scheduleUluleSync(delayMs = currentUluleIntervalMs()) {
   }, delayMs)
 }
 
-async function syncUluleDelta({ reason = "manual" } = {}) {
+async function syncUluleWindow({ reason = "manual", sinceMs } = {}) {
   if (!isUluleConfigured()) return { ok: false, error: "ulule_not_configured" }
   if (ululeSyncState.inProgress) return { ok: false, error: "sync_in_progress" }
 
   ululeSyncState.inProgress = true
   ululeSyncState.lastReason = reason
   const startedAtMs = Date.now()
-  const sinceMs = startedAtMs - ULULE_DELTA_HOURS * 60 * 60 * 1000
+  const effectiveSinceMs = Number.isFinite(sinceMs) ? sinceMs : startedAtMs - ULULE_DELTA_HOURS * 60 * 60 * 1000
   let updatedOrders = 0
   try {
     const [doneOrders, completedOrders] = await Promise.all([
-      fetchUluleOrdersByStatus("payment-done", sinceMs),
-      fetchUluleOrdersByStatus("payment-completed", sinceMs)
+      fetchUluleOrdersByStatus("payment-done", effectiveSinceMs),
+      fetchUluleOrdersByStatus("payment-completed", effectiveSinceMs)
     ])
 
-    const recentOrders = [...doneOrders, ...completedOrders].filter((order) => parseOrderTimestampMs(order) >= sinceMs)
+    const recentOrders = [...doneOrders, ...completedOrders].filter((order) => parseOrderTimestampMs(order) >= effectiveSinceMs)
     for (const order of recentOrders) {
       if (upsertUluleEligible(order, startedAtMs)) {
         updatedOrders += 1
@@ -1150,6 +1160,20 @@ async function syncUluleDelta({ reason = "manual" } = {}) {
   } finally {
     ululeSyncState.inProgress = false
   }
+}
+
+async function syncUluleDelta({ reason = "manual" } = {}) {
+  return syncUluleWindow({
+    reason,
+    sinceMs: Date.now() - ULULE_DELTA_HOURS * 60 * 60 * 1000
+  })
+}
+
+async function syncUluleBackfill({ reason = "startup_backfill" } = {}) {
+  return syncUluleWindow({
+    reason,
+    sinceMs: Date.now() - ULULE_LONG_CACHE_DAYS * 24 * 60 * 60 * 1000
+  })
 }
 
 function getUluleStatus() {
@@ -1338,6 +1362,13 @@ fastify.get("/api/backend-bruno/content", { preHandler: requireAdmin }, async ()
     ok: true,
     persisted: contentStorageReady,
     content: serializeContent()
+  }
+})
+
+fastify.get("/api/branding", async () => {
+  return {
+    ok: true,
+    branding: serializeBranding()
   }
 })
 
@@ -2040,7 +2071,7 @@ const start = async () => {
     bootstrapGameData()
     if (isUluleConfigured()) {
       scheduleUluleSync(1000)
-      syncUluleDelta({ reason: "startup" })
+      syncUluleBackfill({ reason: "startup" })
     } else {
       fastify.log.warn("Ulule sync disabled: ULULE_API_KEY or ULULE_PROJECT_ID missing")
     }

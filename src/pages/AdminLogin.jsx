@@ -1,9 +1,11 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
+import useBrandLogo from "../hooks/useBrandLogo.js"
 
 export default function AdminLogin() {
   const navigate = useNavigate()
+  const [logoSrc] = useBrandLogo()
   const [adminKey, setAdminKey] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -37,7 +39,7 @@ export default function AdminLogin() {
   return (
     <div className="login-shell">
       <div className="login-card">
-        <OldeupeLogo className="brand-logo login-brand-logo" />
+        <OldeupeLogo className="brand-logo login-brand-logo" src={logoSrc} />
         <h1>Connexion admin</h1>
         <p>Accès sécurisé au tableau de bord du bingo live.</p>
         <input

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
 
 const CONTENT_SECTIONS = [
+  { key: "brand", label: "Logo" },
   { key: "player", label: "Joueur" },
   { key: "overlay", label: "Overlay" }
 ]
@@ -80,9 +81,9 @@ export default function AdminContent() {
     <div className="admin-shell">
       <div className="admin-header">
         <div>
-          <OldeupeLogo className="brand-logo admin-brand-logo" />
+          <OldeupeLogo className="brand-logo admin-brand-logo" src={content["brand.logo_src"] || ""} />
           <h1>Contenus editables</h1>
-          <p>Modifie ici les textes visibles sans retoucher le code.</p>
+          <p>Modifie ici les textes visibles sans retoucher le code, y compris la source du logo original.</p>
         </div>
         <div className="row">
           <Link className="btn ghost" to="/admin">
@@ -106,6 +107,14 @@ export default function AdminContent() {
       {sections.map((section) => (
         <section key={section.key} className="panel">
           <h2>{section.label}</h2>
+          {section.key === "brand" ? (
+            <div className="brand-editor-preview">
+              <OldeupeLogo className="brand-logo admin-brand-logo" src={content["brand.logo_src"] || ""} />
+              <p className="hint">
+                Colle ici l'image originale telle quelle, sous forme d'URL directe ou de `data:` URL. Aucun retraitement n'est applique.
+              </p>
+            </div>
+          ) : null}
           <div className="content-editor-list">
             {section.items.map((key) => (
               <label key={key} className="content-editor-item">

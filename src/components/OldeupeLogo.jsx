@@ -1,36 +1,13 @@
-export default function OldeupeLogo({ className = "", title = "OLDEUPE" }) {
+export default function OldeupeLogo({ className = "", title = "OLDEUPE", src = "" }) {
+  const normalizedSrc = typeof src === "string" ? src.trim() : ""
+
+  if (normalizedSrc) {
+    return <img className={className} src={normalizedSrc} alt={title} />
+  }
+
   return (
-    <svg
-      className={className}
-      viewBox="0 0 600 151"
-      role="img"
-      aria-label={title}
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <title>{title}</title>
-      <path
-        d="M24 2H576L598 24V127L576 149H24L2 127V24L24 2Z"
-        fill="#ff0b0b"
-        stroke="#ff0b0b"
-        strokeWidth="4"
-      />
-      <path
-        d="M31 15H569L585 31V120L569 136H31L15 120V31L31 15Z"
-        fill="none"
-        stroke="#111111"
-        strokeWidth="8"
-      />
-      <path d="M16 15H38V31H31C22.7 31 16 24.3 16 16V15Z" fill="#ff0b0b" />
-      <path d="M584 120H562V136H569C577.3 136 584 129.3 584 121V120Z" fill="#ff0b0b" />
-      <g fill="#111111">
-        <path d="M47 75.5C47 49.8 62.6 33 83.3 33C104 33 119.6 49.8 119.6 75.5C119.6 101.2 104 118 83.3 118C62.6 118 47 101.2 47 75.5ZM76.6 75.5C76.6 87.8 79.1 92.3 83.3 92.3C87.4 92.3 90 87.8 90 75.5C90 63.2 87.4 58.7 83.3 58.7C79.1 58.7 76.6 63.2 76.6 75.5Z" />
-        <path d="M124.8 35.7H154.1V91.2H191.8V115H124.8V35.7Z" />
-        <path d="M197.8 35.7H236.7C265.6 35.7 287.3 47.9 287.3 75.1C287.3 102.3 265.6 115 238.4 115H197.8V35.7ZM235.3 91.8C247.2 91.8 257.5 88.1 257.5 75.1C257.5 62.1 247.2 58.9 235.3 58.9H227.1V91.8H235.3Z" />
-        <path d="M294.9 35.7H357.2V59.6H324.2V65H352.4V88.9H324.2V91.2H358.5V115H294.9V35.7Z" />
-        <path d="M364.8 78V35.7H394.1V74.3C394.1 87.1 396.8 91.5 404.2 91.5C411.7 91.5 414.4 87.1 414.4 74.3V35.7H442.6V78C442.6 108 428.1 118 404.2 118C380.3 118 364.8 108 364.8 78Z" />
-        <path d="M450.3 35.7H492.5C515 35.7 533.5 43.9 533.5 67.4C533.5 89.9 514.4 99.6 492.5 99.6H479.6V115H450.3V35.7ZM490.8 76.5C500.2 76.5 505 72.8 505 67.4C505 61.7 499.1 59.9 489.8 59.9H479.6V76.5H490.8Z" />
-        <path d="M539.4 35.7H601.7V59.6H568.7V65H596.9V88.9H568.7V91.2H603V115H539.4V35.7Z" />
-      </g>
-    </svg>
+    <div className={`${className} brand-wordmark`} aria-label={title} role="img">
+      <span>{title}</span>
+    </div>
   )
 }

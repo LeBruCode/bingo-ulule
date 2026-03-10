@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
+import useBrandLogo from "../hooks/useBrandLogo.js"
 
 const DEFAULT_CATEGORIES = ["coulisses", "creative", "chat", "public", "dons", "general"]
 
 export default function Admin() {
   const navigate = useNavigate()
+  const [logoSrc] = useBrandLogo()
   const [debug, setDebug] = useState(null)
   const [boardRows, setBoardRows] = useState(4)
   const [boardCols, setBoardCols] = useState(5)
@@ -530,7 +532,7 @@ export default function Admin() {
     <div className="admin-shell">
       <div className="admin-header">
         <div>
-          <OldeupeLogo className="brand-logo admin-brand-logo" />
+          <OldeupeLogo className="brand-logo admin-brand-logo" src={logoSrc} />
           <h1>Tableau de bord live</h1>
         </div>
         <div className="row">

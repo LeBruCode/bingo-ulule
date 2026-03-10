@@ -27,6 +27,8 @@ const previousTriggeredRef = useRef(new Set())
 const vibrationTimeoutRef = useRef(null)
 const hapticsUnlockedRef = useRef(false)
 const winnerTierRef = useRef(null)
+const previousTargetTierRef = useRef(null)
+const logoSrc = typeof content["brand.logo_src"]==="string" ? content["brand.logo_src"] : ""
 
 function t(key,fallback,vars={}){
  const template = typeof content[key]==="string" && content[key] ? content[key] : fallback
@@ -144,11 +146,21 @@ const rowMissingCounts = lineGroups.map((line)=>
  line.reduce((missing,eventName)=>missing+(state?.triggered.includes(eventName)?0:1),0)
 )
 const sortedMissingCounts = [...rowMissingCounts].sort((a,b)=>a-b)
+function formatTierLabel(tier,totalRows){
+ if(tier===totalRows) return "le carton plein"
+ return `${tier} ligne${tier>1?"s":""}`
+}
+
+function formatPlayingLabel(tier,totalRows){
+ return `On joue pour ${formatTierLabel(tier,totalRows)}`
+}
+
 const tierProgress = Array.from({length:boardRows},(_,index)=>{
  const tier=index+1
  const missing=sortedMissingCounts.slice(0,tier).reduce((sum,value)=>sum+value,0)
- const label=tier===boardRows?"Carton plein":`${tier} ligne${tier>1?"s":""}`
- return {tier,label,missing}
+ const label=formatPlayingLabel(tier,boardRows)
+ const shortLabel=formatTierLabel(tier,boardRows)
+ return {tier,label,shortLabel,missing}
 })
 const currentTargetTier = Number(state?.phase?.targetTier || 1)
 const currentTierProgress = tierProgress.find(({tier})=>tier===currentTargetTier) || null
@@ -254,6 +266,20 @@ useEffect(()=>{
  setRaffleStatus("")
 },[isQualifiedForCurrentTier,currentTargetTier])
 
+useEffect(()=>{
+ if(previousTargetTierRef.current===null){
+  previousTargetTierRef.current = currentTargetTier
+  return
+ }
+ if(previousTargetTierRef.current===currentTargetTier) return
+ previousTargetTierRef.current = currentTargetTier
+ setRaffleOpen(false)
+ setRaffleLoading(false)
+ setRaffleStatus("")
+ setRaffleFirstName("")
+ setRaffleEmail("")
+},[currentTargetTier])
+
 async function submitRaffleEntry(){
  if(!currentTierProgress) return
  if(!raffleFirstName.trim() || !raffleEmail.trim()){
@@ -308,7 +334,7 @@ if(!card) return (
 <div className="player-shell">
  <div className="player-stage">
   <div className="player-head">
-   <OldeupeLogo className="brand-logo player-brand-logo" />
+   <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
    <h1>{t("player.title","Bingo Live")}</h1>
    <p>{socketError || t("player.loading_card","Chargement de la carte...")}</p>
   </div>
@@ -323,14 +349,13 @@ return(
 <div className="player-head">
  <div className="player-hero">
   <div className="player-hero-copy">
-   <OldeupeLogo className="brand-logo player-brand-logo" />
+   <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
    <span className="player-kicker">{t("player.subtitle","Campagne en direct")}</span>
    <h1>{t("player.title","Bingo Live")}</h1>
-   <p className="player-phase-lead">{t("player.phase_prefix","Palier en cours : {label}",{label:state?.phase?.targetLabel || "1 ligne"})}</p>
    <div className="player-meta">
     <span className="player-counter">{activeCount}/{card.length} cases actives</span>
     {isQualifiedForCurrentTier && currentTierProgress ? (
-     <span className="player-qualified-pill">Qualifie pour {currentTierProgress.label}</span>
+     <span className="player-qualified-pill">{currentTierProgress.label}</span>
     ) : null}
    </div>
   </div>
@@ -338,10 +363,10 @@ return(
   <div className="player-hero-side">
    <div className="phase-spotlight">
     <span className="phase-spotlight-label">Manche en cours</span>
-    <strong>{state?.phase?.targetLabel || "1 ligne"}</strong>
+    <strong>{formatPlayingLabel(currentTargetTier,boardRows)}</strong>
     {currentTierProgress ? (
      <small>
-      {currentTierProgress.missing===0
+       {currentTierProgress.missing===0
        ? "Ta carte est eligible au tirage"
        : `Encore ${currentTierProgress.missing} case${currentTierProgress.missing>1?"s":""} pour ce palier`}
      </small>
@@ -367,7 +392,6 @@ return(
       <div className="countdown-cell"><strong>{String(countdownParts?.seconds ?? 0).padStart(2,"0")}</strong><span>{t("player.countdown_seconds","Secondes")}</span></div>
      </div>
     )}
-    {campaignRemainingMs > 0 && <p className="campaign-countdown-sub">{formatRemaining(campaignRemainingMs)}</p>}
    </div>
   )}
 
@@ -387,17 +411,25 @@ return(
 </div>
 
 <div className="player-progress">
- {tierProgress.map(({tier,label,missing})=>(
+  {tierProgress.map(({tier,label,missing})=>(
   <div key={tier} className={"progress-item "+(missing===0?"done":"")+(tier===currentTargetTier?" current":"")}>
    <span>{label}</span>
-   <strong>{missing===0?t("player.progress_ready","Eligible au tirage"):t("player.progress_missing","Il manque {missing} case{plural}",{missing,plural:missing>1?"s":""})}</strong>
+   <strong>
+    {missing!==0
+     ? t("player.progress_missing","Il manque {missing} case{plural}",{missing,plural:missing>1?"s":""})
+     : tier<currentTargetTier
+      ? t("player.progress_closed","Tirage termine")
+      : tier===currentTargetTier
+       ? t("player.progress_ready","Eligible au tirage")
+       : t("player.progress_waiting_round","En attente de cette manche")}
+   </strong>
   </div>
  ))}
 </div>
 
 {isQualifiedForCurrentTier && currentTierProgress && (
  <div className="winner-banner">
-  {t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:currentTierProgress.label})}
+  {t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:currentTierProgress.shortLabel})}
  </div>
 )}
 
@@ -407,7 +439,7 @@ return(
  <div className="raffle-modal-backdrop">
  <div className="raffle-modal">
    <h2>{t("player.modal_title","Participer au tirage")}</h2>
-   <p>{t("player.modal_body","Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",{label:currentTierProgress.label})}</p>
+   <p>{t("player.modal_body","Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",{label:currentTierProgress.shortLabel})}</p>
    {raffleStatus && <p className="status">{raffleStatus}</p>}
    <input
     className="input"

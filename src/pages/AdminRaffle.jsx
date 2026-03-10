@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
+import useBrandLogo from "../hooks/useBrandLogo.js"
 
 export default function AdminRaffle() {
   const navigate = useNavigate()
+  const [logoSrc] = useBrandLogo()
   const [debug, setDebug] = useState(null)
   const [tier, setTier] = useState(1)
   const [entries, setEntries] = useState([])
@@ -182,7 +184,7 @@ export default function AdminRaffle() {
     <div className="raffle-shell">
       <header className="raffle-topbar">
         <div className="raffle-title-wrap">
-          <OldeupeLogo className="brand-logo raffle-brand-logo" />
+          <OldeupeLogo className="brand-logo raffle-brand-logo" src={logoSrc} />
           <span className="raffle-kicker">Bingo Live</span>
           <h1>Tirage au sort</h1>
           <p>
