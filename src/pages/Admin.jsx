@@ -527,6 +527,31 @@ export default function Admin() {
     }
   }
 
+  async function freezeUluleHistory() {
+    setLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/ulule/freeze-history", {
+        method: "POST"
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur snapshot Ulule : ${data.error || "unknown_error"}`)
+        return
+      }
+      setDebug((prev) =>
+        prev
+          ? {
+              ...prev,
+              ulule: data.ulule
+            }
+          : prev
+      )
+      setStatus(`Historique Ulule figé jusqu’au ${formatDateTime(data.ulule?.frozenBefore)}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function saveTierRewards() {
     setLoading(true)
     setStatus("")
@@ -1016,6 +1041,17 @@ export default function Admin() {
                 <div><strong>{debug.activationCount || 0}</strong><span>activations</span></div>
                 <div><strong>{debug.rows}x{debug.cols}</strong><span>grille</span></div>
                 <div><strong>{formatDateTime(debug.ulule?.lastSyncAt)}</strong><span>dernière synchro Ulule</span></div>
+                <div><strong>{debug.ulule?.frozenEligibleEmailsCached || 0}</strong><span>e-mails figés Ulule</span></div>
+              </div>
+              <div className="row" style={{ marginTop: 14 }}>
+                <button className="btn ghost" onClick={freezeUluleHistory} disabled={loading}>
+                  Figer l’historique Ulule
+                </button>
+                {debug.ulule?.frozenBefore ? (
+                  <span className="hint">Historique figé jusqu’au : {formatDateTime(debug.ulule.frozenBefore)}</span>
+                ) : (
+                  <span className="hint">Aucun historique Ulule figé pour le moment.</span>
+                )}
               </div>
               <div className="round-timeline">
                 {roundTimeline.map((item) => (

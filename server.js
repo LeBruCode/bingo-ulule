@@ -77,9 +77,12 @@ const ULULE_LONG_CACHE_DAYS = 40
 const ULULE_DELTA_HOURS = 4
 const ULULE_SYNC_INTERVAL_LIVE_MS = 15000
 const ULULE_SYNC_INTERVAL_IDLE_MS = 10 * 60 * 1000
-const ULULE_SYNC_MAX_PAGES = 20
+const ULULE_SYNC_MAX_PAGES = 200
+const ULULE_SYNC_PAGE_SIZE = 100
 const ULULE_SYNC_AUTO_LIVE = true
 let ululeContributionByEmail = new Map()
+let ululeFrozenContributionByEmail = new Map()
+let ululeFrozenBeforeMs = null
 let ululeOrderLedger = new Map()
 let ululeSyncTimer = null
 const ululeSyncState = {
@@ -776,6 +779,8 @@ function serializeRuntimeState() {
     milestoneWinnersByWindow: [...milestoneWinnersByWindow.entries()],
     collectiveChallenges,
     activeCollectiveChallenge,
+    ululeFrozenBeforeMs,
+    ululeFrozenContributionByEmail: [...ululeFrozenContributionByEmail.entries()],
     ululeOrderLedger: [...ululeOrderLedger.values()],
     raffleEntrySeq,
     raffleQuotaByTier,
@@ -881,6 +886,29 @@ function normalizeUluleOrderLedger(input) {
       country: normalizeCountry(row.country),
       departmentCode: typeof row.departmentCode === "string" ? row.departmentCode.trim().slice(0, 12) : "",
       paidAt: typeof row.paidAt === "string" ? row.paidAt : new Date().toISOString()
+    })
+  }
+  return map
+}
+
+function normalizeUluleContributionSnapshot(input) {
+  const map = new Map()
+  if (!Array.isArray(input)) return map
+  for (const row of input) {
+    if (!Array.isArray(row) || typeof row[0] !== "string" || !row[1] || typeof row[1] !== "object") continue
+    map.set(normalizeRaffleEmail(row[0]), {
+      email: normalizeRaffleEmail(row[1].email || row[0]),
+      hasReward: Boolean(row[1].hasReward),
+      maxTotalCents: Math.max(0, Number(row[1].maxTotalCents || 0)),
+      eligible: Boolean(row[1].eligible),
+      eligibilityReason: typeof row[1].eligibilityReason === "string" ? row[1].eligibilityReason : "unknown",
+      firstName: normalizeFirstName(row[1].firstName),
+      lastInitial: normalizeLastInitial(row[1].lastInitial),
+      city: normalizeCity(row[1].city),
+      country: normalizeCountry(row[1].country),
+      departmentCode: typeof row[1].departmentCode === "string" ? row[1].departmentCode.trim().slice(0, 12) : "",
+      lastSeenMs: Math.max(0, Number(row[1].lastSeenMs || 0)),
+      updatedAtMs: Math.max(0, Number(row[1].updatedAtMs || 0))
     })
   }
   return map
@@ -1009,6 +1037,8 @@ function applyPendingRuntimeState() {
     : 1
   collectiveChallenges = normalizeChallengeDefinitions(stateValue.collectiveChallenges)
   activeCollectiveChallenge = normalizeActiveCollectiveChallenge(stateValue.activeCollectiveChallenge)
+  ululeFrozenBeforeMs = Number.isFinite(Number(stateValue.ululeFrozenBeforeMs)) ? Number(stateValue.ululeFrozenBeforeMs) : null
+  ululeFrozenContributionByEmail = normalizeUluleContributionSnapshot(stateValue.ululeFrozenContributionByEmail)
   milestoneWonEmails = new Set(
     Array.isArray(stateValue.milestoneWonEmails)
       ? stateValue.milestoneWonEmails.map((email) => normalizeRaffleEmail(email)).filter(Boolean)
@@ -1732,7 +1762,7 @@ function parseNextLink(meta) {
 }
 
 function buildUluleStatusUrl(status) {
-  return `${ULULE_API_BASE}/projects/${ULULE_PROJECT_ID}/orders?status=${encodeURIComponent(status)}&limit=20&show_anonymous=true`
+  return `${ULULE_API_BASE}/projects/${ULULE_PROJECT_ID}/orders?status=${encodeURIComponent(status)}&limit=${ULULE_SYNC_PAGE_SIZE}&show_anonymous=true`
 }
 
 function upsertUluleEligible(order, nowMs) {
@@ -1808,9 +1838,72 @@ function upsertUluleEligible(order, nowMs) {
 function pruneUluleEligibilityCache(nowMs) {
   const minSeenMs = nowMs - ULULE_LONG_CACHE_DAYS * 24 * 60 * 60 * 1000
   for (const [email, row] of ululeContributionByEmail.entries()) {
+    if (ululeFrozenContributionByEmail.has(email)) {
+      ululeContributionByEmail.delete(email)
+      continue
+    }
     if ((row.lastSeenMs || 0) < minSeenMs) {
       ululeContributionByEmail.delete(email)
     }
+  }
+}
+
+function mergeUluleContributionRows(base, incoming) {
+  if (!base) return { ...incoming }
+  return {
+    ...base,
+    email: incoming.email || base.email || "",
+    hasReward: Boolean(base.hasReward || incoming.hasReward),
+    maxTotalCents: Math.max(Number(base.maxTotalCents || 0), Number(incoming.maxTotalCents || 0)),
+    eligible: Boolean(base.eligible || incoming.eligible),
+    eligibilityReason: base.eligible || incoming.eligible
+      ? "eligible"
+      : incoming.eligibilityReason || base.eligibilityReason || "unknown",
+    firstName: incoming.firstName || base.firstName || "",
+    lastInitial: incoming.lastInitial || base.lastInitial || "",
+    city: incoming.city || base.city || "",
+    country: incoming.country || base.country || "",
+    departmentCode: incoming.departmentCode || base.departmentCode || "",
+    lastSeenMs: Math.max(Number(base.lastSeenMs || 0), Number(incoming.lastSeenMs || 0)),
+    updatedAtMs: Math.max(Number(base.updatedAtMs || 0), Number(incoming.updatedAtMs || 0))
+  }
+}
+
+function startOfTodayMs() {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
+async function freezeUluleHistorySnapshot() {
+  const cutoffMs = startOfTodayMs()
+  const nextFrozen = new Map(ululeFrozenContributionByEmail)
+
+  for (const row of ululeContributionByEmail.values()) {
+    if ((row.lastSeenMs || 0) >= cutoffMs) continue
+    const email = normalizeRaffleEmail(row.email)
+    if (!email) continue
+    nextFrozen.set(email, mergeUluleContributionRows(nextFrozen.get(email), row))
+  }
+
+  ululeFrozenContributionByEmail = nextFrozen
+  ululeFrozenBeforeMs = cutoffMs
+
+  for (const [email, row] of ululeContributionByEmail.entries()) {
+    if ((row.lastSeenMs || 0) < cutoffMs) {
+      ululeContributionByEmail.delete(email)
+    }
+  }
+
+  await saveRuntimeState()
+  pushAdminLog("freeze_ulule_history", {
+    cutoffAt: new Date(cutoffMs).toISOString(),
+    frozenEmails: ululeFrozenContributionByEmail.size
+  })
+  return {
+    ok: true,
+    cutoffAt: new Date(cutoffMs).toISOString(),
+    frozenEmails: ululeFrozenContributionByEmail.size
   }
 }
 
@@ -1943,6 +2036,8 @@ function getUluleStatus() {
     deltaHours: ULULE_DELTA_HOURS,
     longCacheDays: ULULE_LONG_CACHE_DAYS,
     minContributionCents: ULULE_MIN_CONTRIBUTION_CENTS,
+    frozenBefore: ululeFrozenBeforeMs ? new Date(ululeFrozenBeforeMs).toISOString() : null,
+    frozenEligibleEmailsCached: [...ululeFrozenContributionByEmail.values()].filter((row) => row.eligible).length,
     eligibleEmailsCached: [...ululeContributionByEmail.values()].filter((row) => row.eligible).length,
     inProgress: ululeSyncState.inProgress,
     lastSyncAt: ululeSyncState.lastSyncAt,
@@ -1960,21 +2055,23 @@ function checkUluleEligibility(email) {
   if (!isUluleConfigured()) return { ok: false, error: "ulule_not_configured" }
 
   const cached = ululeContributionByEmail.get(normalizedEmail)
-  if (!cached) return { ok: true, eligible: false }
+  const frozen = ululeFrozenContributionByEmail.get(normalizedEmail)
+  const merged = frozen && cached ? mergeUluleContributionRows(frozen, cached) : (cached || frozen)
+  if (!merged) return { ok: true, eligible: false }
 
   return {
     ok: true,
-    eligible: Boolean(cached.eligible),
-    eligibilityReason: cached.eligibilityReason || (cached.eligible ? "eligible" : "unknown"),
-    hasReward: Boolean(cached.hasReward),
-    orderTotalCents: Number(cached.maxTotalCents || 0),
-    firstName: cached.firstName || "",
-    lastInitial: cached.lastInitial || "",
-    city: cached.city || "",
-    country: cached.country || "",
-    departmentCode: cached.departmentCode || "",
-    lastSeenAt: new Date(cached.lastSeenMs || Date.now()).toISOString(),
-    cacheSource: "ulule_delta_cache"
+    eligible: Boolean(merged.eligible),
+    eligibilityReason: merged.eligibilityReason || (merged.eligible ? "eligible" : "unknown"),
+    hasReward: Boolean(merged.hasReward),
+    orderTotalCents: Number(merged.maxTotalCents || 0),
+    firstName: merged.firstName || "",
+    lastInitial: merged.lastInitial || "",
+    city: merged.city || "",
+    country: merged.country || "",
+    departmentCode: merged.departmentCode || "",
+    lastSeenAt: new Date(merged.lastSeenMs || Date.now()).toISOString(),
+    cacheSource: frozen && cached ? "ulule_snapshot+delta_cache" : frozen ? "ulule_snapshot_cache" : "ulule_delta_cache"
   }
 }
 
@@ -2687,6 +2784,19 @@ fastify.post("/api/backend-bruno/ulule/sync-now", { preHandler: requireAdmin }, 
   scheduleUluleSync(currentUluleIntervalMs())
   return {
     ok: Boolean(result.ok),
+    result,
+    ulule: getUluleStatus()
+  }
+})
+
+fastify.post("/api/backend-bruno/ulule/freeze-history", { preHandler: requireAdmin }, async (req, reply) => {
+  if (!isUluleConfigured()) {
+    reply.code(400)
+    return { ok: false, error: "ulule_not_configured" }
+  }
+  const result = await freezeUluleHistorySnapshot()
+  return {
+    ok: true,
     result,
     ulule: getUluleStatus()
   }
