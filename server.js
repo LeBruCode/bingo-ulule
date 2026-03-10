@@ -67,7 +67,7 @@ let bootstrapPromise = null
 const MAX_ACTIVATION_LOG = Number(process.env.MAX_ACTIVATION_LOG || 5000)
 const ADMIN_SESSION_COOKIE = "bingo_admin_session"
 const ADMIN_SESSION_TTL_SECONDS = Number(process.env.ADMIN_SESSION_TTL_SECONDS || 60 * 60 * 12)
-const adminSessions = new Map()
+const ADMIN_SESSION_SECRET = String(process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_KEY || "change-me")
 const ULULE_API_BASE = process.env.ULULE_API_BASE || "https://api.ulule.com/v1"
 const ULULE_API_KEY = process.env.ULULE_API_KEY || ""
 const ULULE_PROJECT_ID = process.env.ULULE_PROJECT_ID || ""
@@ -120,8 +120,17 @@ const DEFAULT_TEXT_CONTENT = {
   "player.join_live_button": "Rejoindre le live YouTube",
   "player.join_ulule_button": "Voir la page Ulule",
   "player.live_message": "",
+  "player.mobile_shell_font_size": "1.125",
+  "player.mobile_title_size": "2.15",
+  "player.mobile_text_size": "1.18",
+  "player.mobile_button_size": "1.14",
+  "player.mobile_countdown_number_size": "2.22",
+  "player.mobile_spotlight_size": "2.34",
+  "player.mobile_progress_size": "1.16",
+  "player.mobile_card_text_size": "1.42",
   "player.raffle_button": "Participer au tirage au sort",
   "player.current_reward_label": "A gagner",
+  "player.cell_validated_badge": "Validé",
   "player.progress_ready": "Eligible au tirage",
   "player.progress_closed": "Tirage termine",
   "player.progress_waiting_round": "En attente de cette manche",
@@ -214,36 +223,36 @@ function getAdminSessionToken(req) {
   return cookies[ADMIN_SESSION_COOKIE] || ""
 }
 
-function cleanupExpiredAdminSessions() {
-  const now = Date.now()
-  for (const [token, expiresAt] of adminSessions.entries()) {
-    if (expiresAt <= now) adminSessions.delete(token)
-  }
+function signAdminSessionPayload(payload) {
+  return crypto.createHmac("sha256", ADMIN_SESSION_SECRET).update(payload).digest("hex")
+}
+
+function safeEqualStrings(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false
+  const left = Buffer.from(a)
+  const right = Buffer.from(b)
+  if (left.length !== right.length) return false
+  return crypto.timingSafeEqual(left, right)
 }
 
 function hasValidAdminSession(req) {
-  cleanupExpiredAdminSessions()
   const token = getAdminSessionToken(req)
   if (!token) return false
-  const expiresAt = adminSessions.get(token)
-  if (!expiresAt || expiresAt <= Date.now()) {
-    adminSessions.delete(token)
-    return false
-  }
-  return true
+  const [expiresAtRaw, signature] = token.split(".")
+  if (!expiresAtRaw || !signature) return false
+  const expiresAt = Number(expiresAtRaw)
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false
+  const expectedSignature = signAdminSessionPayload(expiresAtRaw)
+  return safeEqualStrings(signature, expectedSignature)
 }
 
 function createAdminSessionToken() {
-  const token = crypto.randomBytes(32).toString("hex")
-  const expiresAt = Date.now() + ADMIN_SESSION_TTL_SECONDS * 1000
-  adminSessions.set(token, expiresAt)
-  return token
+  const expiresAt = String(Date.now() + ADMIN_SESSION_TTL_SECONDS * 1000)
+  const signature = signAdminSessionPayload(expiresAt)
+  return `${expiresAt}.${signature}`
 }
 
-function clearAdminSession(req) {
-  const token = getAdminSessionToken(req)
-  if (token) adminSessions.delete(token)
-}
+function clearAdminSession() {}
 
 function shouldUseSecureCookie(req) {
   const forwardedProto = String(req.headers["x-forwarded-proto"] || "").toLowerCase()

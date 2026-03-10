@@ -42,6 +42,23 @@ function t(key,fallback,vars={}){
  })
 }
 
+function cssRemSetting(key,fallback,min,max){
+ const raw = Number.parseFloat(content[key])
+ const safe = Number.isFinite(raw) ? Math.min(Math.max(raw,min),max) : fallback
+ return `${safe}rem`
+}
+
+const playerShellStyle = {
+ "--player-mobile-shell-font-size": cssRemSetting("player.mobile_shell_font_size",1.125,0.95,1.6),
+ "--player-mobile-title-size": cssRemSetting("player.mobile_title_size",2.15,1.4,3.2),
+ "--player-mobile-text-size": cssRemSetting("player.mobile_text_size",1.18,0.95,1.8),
+ "--player-mobile-button-size": cssRemSetting("player.mobile_button_size",1.14,0.95,1.8),
+ "--player-mobile-countdown-number-size": cssRemSetting("player.mobile_countdown_number_size",2.22,1.2,3.4),
+ "--player-mobile-spotlight-size": cssRemSetting("player.mobile_spotlight_size",2.34,1.3,3.4),
+ "--player-mobile-progress-size": cssRemSetting("player.mobile_progress_size",1.16,0.95,1.8),
+ "--player-mobile-card-text-size": cssRemSetting("player.mobile_card_text_size",1.42,0.95,2.2)
+}
+
 function triggerHaptics(pattern){
  if(typeof navigator==="undefined" || typeof navigator.vibrate!=="function") return
  if(!hapticsUnlockedRef.current) return
@@ -377,7 +394,7 @@ async function submitRaffleEntry(){
 }
 
 if(!card) return (
-<div className="player-shell">
+<div className="player-shell" style={playerShellStyle}>
  <div className="player-stage">
   <div className="player-head">
    <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
@@ -389,7 +406,7 @@ if(!card) return (
 )
 
 return(
-<div className="player-shell">
+<div className="player-shell" style={playerShellStyle}>
 <div className="player-stage">
 
 <div className="player-head">
@@ -545,7 +562,7 @@ return(
  <div key={i} className={"cell "+(active?"active":"")+(freshCells.has(i)?" fresh":"")}>
  <div className="cell-inner">
   <span className="cell-label">{c}</span>
-  {active && <span className="cell-badge">ACTIF</span>}
+  {active && <span className="cell-badge">{t("player.cell_validated_badge","Validé")}</span>}
  </div>
  </div>
  )
@@ -572,7 +589,7 @@ return(
    return(
    <div key={absoluteIndex} className={"line-item "+(active?"active":"")+(fresh?" fresh":"")}>
     <span className="line-item-text">{eventName}</span>
-    {active && <span className="line-item-badge">ACTIF</span>}
+    {active && <span className="line-item-badge">{t("player.cell_validated_badge","Validé")}</span>}
    </div>
    )
   })}

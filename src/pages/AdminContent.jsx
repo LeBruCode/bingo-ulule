@@ -25,8 +25,14 @@ export default function AdminContent() {
   }, [content])
 
   async function fetchJson(url, options = {}) {
-    const response = await fetch(url, options)
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      ...options
+    })
     const data = await response.json().catch(() => ({}))
+    if (response.status === 403) {
+      navigate("/admin/login", { replace: true })
+    }
     return { response, data }
   }
 

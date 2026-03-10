@@ -1697,11 +1697,13 @@ body.overlay-mode #root {
 @media (max-width: 860px) {
   .player-shell {
     padding: 14px 10px 24px;
+    font-size: var(--player-mobile-shell-font-size, 1.125rem);
   }
 
   .player-stage {
     border-radius: 20px;
     padding: 16px 14px;
+    max-width: 100%;
   }
 
   .player-hero {
@@ -1731,7 +1733,7 @@ body.overlay-mode #root {
   }
 
   .player-head h1 {
-    font-size: 2.15rem;
+    font-size: var(--player-mobile-title-size, 2.15rem);
     line-height: 1;
   }
 
@@ -1741,25 +1743,29 @@ body.overlay-mode #root {
   }
 
   .player-head p {
-    font-size: 1.18rem;
+    font-size: var(--player-mobile-text-size, 1.18rem);
     line-height: 1.58;
   }
 
   .player-phase-lead {
-    font-size: 1.22rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) + 0.04rem);
   }
 
   .player-meta {
     gap: 12px;
   }
 
+  .player-toolbar {
+    gap: 14px;
+  }
+
   .player-counter {
-    font-size: 1.08rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.1rem);
     padding: 10px 16px;
   }
 
   .player-qualified-pill {
-    font-size: 1.08rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.1rem);
     padding: 10px 16px;
   }
 
@@ -1769,7 +1775,7 @@ body.overlay-mode #root {
 
   .player-progress {
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 12px;
   }
 
   .countdown-grid {
@@ -1785,24 +1791,24 @@ body.overlay-mode #root {
   }
 
   .campaign-countdown {
-    font-size: 1.08rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.1rem);
     letter-spacing: 0.14em;
   }
 
   .campaign-countdown-live-dot {
     padding: 10px 14px;
-    font-size: 0.92rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.26rem);
   }
 
   .player-countdown-card {
     border-radius: 22px;
-    padding: 16px;
+    padding: 18px;
   }
 
   .countdown-live-message {
     margin-top: 18px;
     padding: 16px 16px;
-    font-size: 1.18rem;
+    font-size: var(--player-mobile-text-size, 1.18rem);
     line-height: 1.52;
   }
 
@@ -1812,57 +1818,57 @@ body.overlay-mode #root {
   }
 
   .countdown-cell strong {
-    font-size: 2.22rem;
+    font-size: var(--player-mobile-countdown-number-size, 2.22rem);
   }
 
   .countdown-cell span {
-    font-size: 0.9rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.28rem);
     letter-spacing: 0.16em;
   }
 
   .phase-spotlight-label {
-    font-size: 0.94rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.24rem);
   }
 
   .phase-spotlight strong {
-    font-size: 2.34rem;
+    font-size: var(--player-mobile-spotlight-size, 2.34rem);
   }
 
   .phase-spotlight small {
-    font-size: 1.16rem;
+    font-size: var(--player-mobile-text-size, 1.18rem);
     line-height: 1.48;
   }
 
   .current-reward-banner {
     padding: 16px 18px;
-    gap: 8px;
+    gap: 10px;
   }
 
   .current-reward-banner span {
-    font-size: 0.96rem;
+    font-size: calc(var(--player-mobile-progress-size, 1.16rem) - 0.2rem);
   }
 
   .current-reward-banner strong {
-    font-size: 1.24rem;
+    font-size: var(--player-mobile-progress-size, 1.16rem);
     line-height: 1.46;
   }
 
   .progress-item {
     padding: 14px 14px;
-    gap: 8px;
+    gap: 10px;
   }
 
   .progress-item span {
-    font-size: 0.98rem;
+    font-size: calc(var(--player-mobile-progress-size, 1.16rem) - 0.18rem);
   }
 
   .progress-item strong {
-    font-size: 1.16rem;
+    font-size: var(--player-mobile-progress-size, 1.16rem);
     line-height: 1.42;
   }
 
   .winner-banner {
-    font-size: 1.18rem;
+    font-size: var(--player-mobile-progress-size, 1.16rem);
     padding: 16px;
     line-height: 1.45;
   }
@@ -1870,10 +1876,11 @@ body.overlay-mode #root {
   .player-actions .btn,
   .raffle-cta,
   .player-live-link {
-    font-size: 1.14rem;
+    font-size: var(--player-mobile-button-size, 1.14rem);
     padding: 16px 18px;
     min-height: 58px;
     font-weight: 700;
+    border-radius: 14px;
   }
 
   .container {
@@ -1925,7 +1932,7 @@ body.overlay-mode #root {
     justify-content: space-between;
     margin-bottom: 10px;
     color: #cbd5e1;
-    font-size: 1.28rem;
+    font-size: calc(var(--player-mobile-card-text-size, 1.42rem) - 0.14rem);
     font-weight: 800;
   }
 
@@ -1934,7 +1941,7 @@ body.overlay-mode #root {
     background: rgba(148, 163, 184, 0.2);
     padding: 4px 9px;
     font-weight: 700;
-    font-size: 0.94rem;
+    font-size: calc(var(--player-mobile-card-text-size, 1.42rem) - 0.48rem);
   }
 
   .line-list {
@@ -1956,7 +1963,7 @@ body.overlay-mode #root {
 
   .line-item-text {
     color: #e5e7eb;
-    font-size: 1.42rem;
+    font-size: var(--player-mobile-card-text-size, 1.42rem);
     line-height: 1.48;
     font-weight: 800;
     text-align: left;
@@ -1968,7 +1975,7 @@ body.overlay-mode #root {
     background: rgba(255, 255, 255, 0.16);
     color: #ecfeff;
     padding: 4px 8px;
-    font-size: 0.88rem;
+    font-size: calc(var(--player-mobile-card-text-size, 1.42rem) - 0.54rem);
     font-weight: 800;
     letter-spacing: 0.06em;
     flex-shrink: 0;
@@ -2043,60 +2050,64 @@ body.overlay-mode #root {
 }
 
 @media (max-width: 420px) {
+  .player-shell {
+    font-size: calc(var(--player-mobile-shell-font-size, 1.125rem) - 0.08rem);
+  }
+
   .player-head h1 {
-    font-size: 1.72rem;
+    font-size: calc(var(--player-mobile-title-size, 2.15rem) - 0.38rem);
   }
 
   .player-head p {
-    font-size: 1.08rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.1rem);
     line-height: 1.52;
   }
 
   .player-phase-lead {
-    font-size: 1.12rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.02rem);
   }
 
   .player-counter,
   .player-qualified-pill {
-    font-size: 1rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.18rem);
     padding: 8px 13px;
   }
 
   .campaign-countdown {
-    font-size: 0.98rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.2rem);
   }
 
   .campaign-countdown-live-dot {
-    font-size: 0.84rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.34rem);
     padding: 8px 12px;
   }
 
   .countdown-cell strong {
-    font-size: 1.98rem;
+    font-size: calc(var(--player-mobile-countdown-number-size, 2.22rem) - 0.24rem);
   }
 
   .countdown-cell span {
-    font-size: 0.82rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.36rem);
   }
 
   .phase-spotlight strong {
-    font-size: 1.96rem;
+    font-size: calc(var(--player-mobile-spotlight-size, 2.34rem) - 0.38rem);
   }
 
   .phase-spotlight small {
-    font-size: 1.08rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.1rem);
   }
 
   .current-reward-banner strong {
-    font-size: 1.12rem;
+    font-size: calc(var(--player-mobile-progress-size, 1.16rem) - 0.04rem);
   }
 
   .progress-item strong {
-    font-size: 1.06rem;
+    font-size: calc(var(--player-mobile-progress-size, 1.16rem) - 0.1rem);
   }
 
   .winner-banner {
-    font-size: 1.08rem;
+    font-size: calc(var(--player-mobile-progress-size, 1.16rem) - 0.08rem);
   }
 
   .card-grid {
@@ -2115,24 +2126,24 @@ body.overlay-mode #root {
   }
 
   .line-item-text {
-    font-size: 1.24rem;
+    font-size: calc(var(--player-mobile-card-text-size, 1.42rem) - 0.18rem);
     line-height: 1.44;
   }
 
   .line-item-badge {
-    font-size: 0.78rem;
+    font-size: calc(var(--player-mobile-card-text-size, 1.42rem) - 0.46rem);
     padding: 4px 8px;
   }
 
   .player-actions .btn,
   .raffle-cta,
   .player-live-link {
-    font-size: 1.04rem;
+    font-size: calc(var(--player-mobile-button-size, 1.14rem) - 0.1rem);
     min-height: 54px;
   }
 
   .countdown-live-message {
-    font-size: 1.08rem;
+    font-size: calc(var(--player-mobile-text-size, 1.18rem) - 0.1rem);
     padding: 14px 12px;
   }
 }
