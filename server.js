@@ -78,7 +78,7 @@ const ULULE_SYNC_INTERVAL_LIVE_MS = 30000
 const ULULE_SYNC_INTERVAL_IDLE_MS = 10 * 60 * 1000
 const ULULE_SYNC_MAX_PAGES = 20
 const ULULE_SYNC_AUTO_LIVE = true
-let ululeEligibleByEmail = new Map()
+let ululeContributionByEmail = new Map()
 let ululeSyncTimer = null
 const ululeSyncState = {
   liveMode: false,
@@ -94,6 +94,49 @@ let progressStatsCache = null
 let progressStatsDirty = true
 let campaignEndAtMs = Number.isFinite(Date.parse(process.env.CAMPAIGN_END_AT || "")) ? Date.parse(process.env.CAMPAIGN_END_AT) : null
 let liveStreamUrl = typeof process.env.LIVE_STREAM_URL === "string" ? process.env.LIVE_STREAM_URL.trim() : ""
+const DEFAULT_TEXT_CONTENT = {
+  "player.title": "Bingo Live",
+  "player.subtitle": "Campagne en direct",
+  "player.phase_prefix": "Palier en cours : {label}",
+  "player.loading_card": "Chargement de la carte...",
+  "player.no_cards_generated": "Initialisation du bingo en cours, reessaie dans quelques secondes.",
+  "player.connection_error": "Connexion indisponible temporairement.",
+  "player.countdown_label": "Fin de campagne dans",
+  "player.countdown_ended": "Campagne terminée",
+  "player.countdown_days": "Jours",
+  "player.countdown_hours": "Heures",
+  "player.countdown_minutes": "Minutes",
+  "player.countdown_seconds": "Secondes",
+  "player.join_live_button": "Rejoindre le live YouTube",
+  "player.raffle_button": "Participer au tirage au sort",
+  "player.progress_ready": "Eligible au tirage",
+  "player.progress_missing": "Il manque {missing} case{plural}",
+  "player.qualified_banner": "Tu as complete {label}. Tu peux participer au tirage au sort.",
+  "player.modal_title": "Participer au tirage",
+  "player.modal_body": "Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",
+  "player.modal_first_name": "Prenom",
+  "player.modal_email": "Email utilise sur Ulule",
+  "player.modal_close": "Fermer",
+  "player.modal_submit": "Valider ma participation",
+  "player.modal_submit_loading": "Verification...",
+  "player.error_missing_fields": "Merci de remplir ton prenom et l'email utilise pour ta contribution Ulule.",
+  "player.error_not_ulule_eligible": "Aucune contribution eligible n'a ete trouvee pour cet email sur Ulule. Verifie que l'email est correct, ou contribue avec cet email avec une contrepartie ou un don d'au moins 10 EUR.",
+  "player.error_contribution_too_low": "Une contribution existe bien pour cet email sur Ulule, mais son montant est inferieur a 10 EUR. Pour participer au tirage, la contribution ou le don doit etre d'au moins 10 EUR.",
+  "player.error_already_won": "Cet email a deja gagne.",
+  "player.error_not_qualified": "Ta qualification n'est plus active pour ce palier.",
+  "player.error_generic": "Erreur : {error}",
+  "player.success_duplicate": "Email deja inscrit pour ce palier.",
+  "player.success_validated": "Inscription au tirage validee.",
+  "overlay.title": "Progression Bingo Live",
+  "overlay.events": "Evenements : {current}/{total}",
+  "overlay.players": "Joueurs : {count}",
+  "overlay.tier_done": "Gagne",
+  "overlay.tier_pending": "En attente",
+  "overlay.next_tier": "Prochain palier : {label}",
+  "overlay.all_done": "Tous les paliers sont gagnes"
+}
+let editableContent = { ...DEFAULT_TEXT_CONTENT }
+let contentStorageReady = false
 
 function boardSize() {
   return ROWS * COLS
@@ -300,6 +343,59 @@ function serializeLiveStream() {
   return {
     url: liveStreamUrl || null
   }
+}
+
+function serializeContent() {
+  return { ...DEFAULT_TEXT_CONTENT, ...editableContent }
+}
+
+async function loadEditableContent() {
+  const { data, error } = await supabase.from("app_content").select("content_key, content_value")
+  if (error) {
+    fastify.log.warn({ error }, "Content table unavailable, using defaults")
+    editableContent = { ...DEFAULT_TEXT_CONTENT }
+    contentStorageReady = false
+    return false
+  }
+
+  const next = { ...DEFAULT_TEXT_CONTENT }
+  for (const row of data || []) {
+    if (typeof row.content_key !== "string") continue
+    next[row.content_key] = typeof row.content_value === "string" ? row.content_value : ""
+  }
+  editableContent = next
+  contentStorageReady = true
+  return true
+}
+
+async function saveEditableContent(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return { ok: true, persisted: contentStorageReady }
+
+  for (const entry of entries) {
+    if (!entry || typeof entry.key !== "string") continue
+    const key = entry.key.trim()
+    if (!key) continue
+    editableContent[key] = typeof entry.value === "string" ? entry.value : ""
+  }
+
+  const rows = entries
+    .filter((entry) => entry && typeof entry.key === "string" && entry.key.trim())
+    .map((entry) => ({
+      content_key: entry.key.trim(),
+      content_value: typeof entry.value === "string" ? entry.value : ""
+    }))
+
+  if (rows.length === 0) return { ok: true, persisted: contentStorageReady }
+
+  const { error } = await supabase.from("app_content").upsert(rows, { onConflict: "content_key" })
+  if (error) {
+    fastify.log.warn({ error }, "Content save fallback to memory only")
+    contentStorageReady = false
+    return { ok: true, persisted: false, warning: "storage_unavailable" }
+  }
+
+  contentStorageReady = true
+  return { ok: true, persisted: true }
 }
 
 function markProgressStatsDirty() {
@@ -616,6 +712,7 @@ io.on("connection", (socket) => {
       return
     }
 
+    socket.emit("content", serializeContent())
     socket.emit("state", serializeState())
     return
   }
@@ -631,6 +728,7 @@ io.on("connection", (socket) => {
 
   const player = ensurePlayer(token)
 
+  socket.emit("content", serializeContent())
   socket.emit("token", token)
   socket.emit("card", cards[player.cardIndex])
   socket.emit("state", serializeState())
@@ -692,6 +790,32 @@ function isUluleConfigured() {
   return Boolean(ULULE_API_KEY && ULULE_PROJECT_ID)
 }
 
+function parseMoneyToCents(raw) {
+  if (raw === null || raw === undefined || raw === "") return 0
+
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw)) return 0
+    if (!Number.isInteger(raw)) return Math.max(0, Math.round(raw * 100))
+    if (raw < 1000) return Math.max(0, raw * 100)
+    return Math.max(0, Math.round(raw))
+  }
+
+  if (typeof raw === "string") {
+    const normalized = raw.trim().replace(",", ".")
+    if (!normalized) return 0
+    if (normalized.includes(".")) {
+      const value = Number(normalized)
+      return Number.isFinite(value) ? Math.max(0, Math.round(value * 100)) : 0
+    }
+    const value = Number(normalized)
+    if (!Number.isFinite(value)) return 0
+    if (value < 1000) return Math.max(0, Math.round(value * 100))
+    return Math.max(0, Math.round(value))
+  }
+
+  return 0
+}
+
 function parseOrderTotalCents(order) {
   const raw =
     order?.order_total ??
@@ -699,8 +823,7 @@ function parseOrderTotalCents(order) {
     order?.total ??
     order?.amount_total ??
     order?.amount
-  const value = Number(raw)
-  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+  return parseMoneyToCents(raw)
 }
 
 function hasOrderReward(order) {
@@ -715,8 +838,7 @@ function parseItemAmountCents(item) {
     item?.unit_price ??
     item?.reward?.price ??
     item?.reward?.amount
-  const value = Number(raw)
-  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+  return parseMoneyToCents(raw)
 }
 
 function hasEligibleFigurationReward(order) {
@@ -733,6 +855,114 @@ function findOrderEmail(order) {
   const direct = order?.user?.email || order?.email || order?.backer_email
   if (typeof direct === "string" && direct.trim()) return direct.trim().toLowerCase()
   return ""
+}
+
+function normalizeHumanName(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().slice(0, 80)
+}
+
+function firstLetter(value) {
+  const normalized = normalizeHumanName(value)
+  return normalized ? normalized[0].toUpperCase() : ""
+}
+
+function normalizeLastInitial(value) {
+  if (typeof value !== "string") return ""
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  return trimmed[0].toUpperCase()
+}
+
+function normalizeCountry(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().slice(0, 80)
+}
+
+function normalizeCity(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().slice(0, 80)
+}
+
+function normalizePostalCode(value) {
+  if (typeof value !== "string") return ""
+  return value.trim().slice(0, 20)
+}
+
+function deriveDepartmentCode(postalCode) {
+  const digits = String(postalCode || "").replace(/\D+/g, "")
+  if (digits.length < 5) return ""
+  if (digits.startsWith("97") || digits.startsWith("98")) return digits.slice(0, 3)
+  return digits.slice(0, 2)
+}
+
+function extractOrderIdentity(order) {
+  const user = order?.user || {}
+  const shipping = order?.shipping_address || order?.shippingAddress || {}
+  const billing = order?.billing_address || order?.billingAddress || {}
+
+  const firstName =
+    normalizeHumanName(shipping?.first_name) ||
+    normalizeHumanName(shipping?.firstName) ||
+    normalizeHumanName(billing?.first_name) ||
+    normalizeHumanName(billing?.firstName) ||
+    normalizeHumanName(user?.first_name) ||
+    normalizeHumanName(user?.firstName) ||
+    normalizeHumanName(order?.first_name) ||
+    normalizeHumanName(order?.firstName) ||
+    ""
+
+  const lastName =
+    normalizeHumanName(shipping?.last_name) ||
+    normalizeHumanName(shipping?.lastName) ||
+    normalizeHumanName(billing?.last_name) ||
+    normalizeHumanName(billing?.lastName) ||
+    normalizeHumanName(user?.last_name) ||
+    normalizeHumanName(user?.lastName) ||
+    normalizeHumanName(order?.last_name) ||
+    normalizeHumanName(order?.lastName) ||
+    ""
+
+  return {
+    firstName,
+    lastInitial: firstLetter(lastName)
+  }
+}
+
+function extractOrderLocation(order) {
+  const user = order?.user || {}
+  const shipping = order?.shipping_address || order?.shippingAddress || {}
+  const billing = order?.billing_address || order?.billingAddress || {}
+
+  const city =
+    normalizeCity(shipping?.city) ||
+    normalizeCity(billing?.city) ||
+    normalizeCity(user?.city) ||
+    ""
+
+  const country =
+    normalizeCountry(shipping?.country) ||
+    normalizeCountry(billing?.country) ||
+    normalizeCountry(user?.country) ||
+    ""
+
+  const postalCode =
+    normalizePostalCode(shipping?.postal_code) ||
+    normalizePostalCode(shipping?.postalCode) ||
+    normalizePostalCode(shipping?.zip) ||
+    normalizePostalCode(billing?.postal_code) ||
+    normalizePostalCode(billing?.postalCode) ||
+    normalizePostalCode(billing?.zip) ||
+    normalizePostalCode(user?.postal_code) ||
+    normalizePostalCode(user?.postalCode) ||
+    normalizePostalCode(user?.zip) ||
+    ""
+
+  return {
+    city,
+    country,
+    departmentCode: deriveDepartmentCode(postalCode)
+  }
 }
 
 function parseOrderTimestampMs(order) {
@@ -766,36 +996,61 @@ function upsertUluleEligible(order, nowMs) {
 
   const totalCents = parseOrderTotalCents(order)
   const eligibleReward = hasEligibleFigurationReward(order)
-  const eligibleDonation = !hasOrderReward(order) && totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
+  const hasReward = hasOrderReward(order)
+  const eligibleDonation = !hasReward && totalCents >= ULULE_MIN_CONTRIBUTION_CENTS
   const eligible = eligibleReward || eligibleDonation
-  if (!eligible) return false
 
   const orderTime = parseOrderTimestampMs(order)
-  const existing = ululeEligibleByEmail.get(email)
+  const identity = extractOrderIdentity(order)
+  const location = extractOrderLocation(order)
+  const existing = ululeContributionByEmail.get(email)
+  const eligibilityReason = eligible
+    ? "eligible"
+    : totalCents > 0 || hasReward
+      ? "amount_below_minimum"
+      : "unknown"
   const next = existing
     ? {
         ...existing,
-        hasReward: existing.hasReward || eligibleReward,
+        hasReward: existing.hasReward || eligibleReward || hasReward,
         maxTotalCents: Math.max(existing.maxTotalCents || 0, totalCents),
+        eligible: existing.eligible || eligible,
+        eligibilityReason: existing.eligible
+          ? "eligible"
+          : eligible
+            ? "eligible"
+            : existing.eligibilityReason || eligibilityReason,
+        firstName: identity.firstName || existing.firstName || "",
+        lastInitial: identity.lastInitial || existing.lastInitial || "",
+        city: location.city || existing.city || "",
+        country: location.country || existing.country || "",
+        departmentCode: location.departmentCode || existing.departmentCode || "",
         lastSeenMs: Math.max(existing.lastSeenMs || 0, orderTime),
         updatedAtMs: nowMs
       }
     : {
         email,
-        hasReward: eligibleReward,
+        hasReward: eligibleReward || hasReward,
         maxTotalCents: totalCents,
+        eligible,
+        eligibilityReason,
+        firstName: identity.firstName,
+        lastInitial: identity.lastInitial,
+        city: location.city,
+        country: location.country,
+        departmentCode: location.departmentCode,
         lastSeenMs: orderTime,
         updatedAtMs: nowMs
       }
-  ululeEligibleByEmail.set(email, next)
-  return true
+  ululeContributionByEmail.set(email, next)
+  return eligible
 }
 
 function pruneUluleEligibilityCache(nowMs) {
   const minSeenMs = nowMs - ULULE_LONG_CACHE_DAYS * 24 * 60 * 60 * 1000
-  for (const [email, row] of ululeEligibleByEmail.entries()) {
+  for (const [email, row] of ululeContributionByEmail.entries()) {
     if ((row.lastSeenMs || 0) < minSeenMs) {
-      ululeEligibleByEmail.delete(email)
+      ululeContributionByEmail.delete(email)
     }
   }
 }
@@ -908,7 +1163,7 @@ function getUluleStatus() {
     deltaHours: ULULE_DELTA_HOURS,
     longCacheDays: ULULE_LONG_CACHE_DAYS,
     minContributionCents: ULULE_MIN_CONTRIBUTION_CENTS,
-    eligibleEmailsCached: ululeEligibleByEmail.size,
+    eligibleEmailsCached: [...ululeContributionByEmail.values()].filter((row) => row.eligible).length,
     inProgress: ululeSyncState.inProgress,
     lastSyncAt: ululeSyncState.lastSyncAt,
     lastDurationMs: ululeSyncState.lastDurationMs,
@@ -924,14 +1179,20 @@ function checkUluleEligibility(email) {
   if (!normalizedEmail) return { ok: false, error: "invalid_email" }
   if (!isUluleConfigured()) return { ok: false, error: "ulule_not_configured" }
 
-  const cached = ululeEligibleByEmail.get(normalizedEmail)
+  const cached = ululeContributionByEmail.get(normalizedEmail)
   if (!cached) return { ok: true, eligible: false }
 
   return {
     ok: true,
-    eligible: true,
+    eligible: Boolean(cached.eligible),
+    eligibilityReason: cached.eligibilityReason || (cached.eligible ? "eligible" : "unknown"),
     hasReward: Boolean(cached.hasReward),
     orderTotalCents: Number(cached.maxTotalCents || 0),
+    firstName: cached.firstName || "",
+    lastInitial: cached.lastInitial || "",
+    city: cached.city || "",
+    country: cached.country || "",
+    departmentCode: cached.departmentCode || "",
     lastSeenAt: new Date(cached.lastSeenMs || Date.now()).toISOString(),
     cacheSource: "ulule_delta_cache"
   }
@@ -950,13 +1211,15 @@ function serializeRaffleTier(tier) {
     id: entry.id,
     email: entry.email,
     firstName: entry.firstName || "",
-    phone: entry.phone || "",
+    lastInitial: entry.lastInitial || "",
     playerToken: entry.playerToken || "",
     ulule: entry.ulule || null,
     source: entry.source,
     createdAt: entry.createdAt
   }))
-  const winner = raffleWinnerByTier[tierIndex]
+  const winnerBase = raffleWinnerByTier[tierIndex]
+  const winnerEntry = winnerBase?.id ? entries.find((entry) => entry.id === winnerBase.id) : null
+  const winner = winnerEntry ? { ...winnerEntry, selectedAt: winnerBase.selectedAt } : winnerBase
   return {
     tier,
     label: tier === ROWS ? `Carton plein (${tier} lignes)` : `${tier} ligne${tier > 1 ? "s" : ""}`,
@@ -986,12 +1249,7 @@ function normalizeFirstName(value) {
   return value.trim().slice(0, 80)
 }
 
-function normalizePhone(value) {
-  if (typeof value !== "string") return ""
-  return value.trim().slice(0, 30)
-}
-
-function addRaffleEntry({ tier, email, source = "manual", ulule = null, firstName = "", phone = "", playerToken = "" }) {
+function addRaffleEntry({ tier, email, source = "manual", ulule = null, firstName = "", playerToken = "" }) {
   const tierIndex = tier - 1
   const entriesMap = raffleEntriesByTier[tierIndex]
   const normalizedEmail = normalizeRaffleEmail(email)
@@ -1010,8 +1268,8 @@ function addRaffleEntry({ tier, email, source = "manual", ulule = null, firstNam
   const entry = {
     id: `r${raffleEntrySeq++}`,
     email: normalizedEmail,
-    firstName: normalizeFirstName(firstName),
-    phone: normalizePhone(phone),
+    firstName: normalizeFirstName(firstName) || normalizeFirstName(ulule?.firstName),
+    lastInitial: normalizeLastInitial(ulule?.lastInitial),
     playerToken: typeof playerToken === "string" ? playerToken.slice(0, 120) : "",
     ulule,
     source,
@@ -1073,6 +1331,31 @@ function serializeAdminEvents() {
 
 fastify.get("/api/backend-bruno/debug", { preHandler: requireAdmin }, async () => {
   return getDebugState()
+})
+
+fastify.get("/api/backend-bruno/content", { preHandler: requireAdmin }, async () => {
+  return {
+    ok: true,
+    persisted: contentStorageReady,
+    content: serializeContent()
+  }
+})
+
+fastify.patch("/api/backend-bruno/content", { preHandler: requireAdmin }, async (req, reply) => {
+  const entries = Array.isArray(req.body?.entries) ? req.body.entries : null
+  if (!entries) {
+    reply.code(400)
+    return { ok: false, error: "invalid_entries" }
+  }
+
+  const result = await saveEditableContent(entries)
+  io.emit("content", serializeContent())
+  return {
+    ok: true,
+    persisted: Boolean(result.persisted),
+    warning: result.warning || null,
+    content: serializeContent()
+  }
 })
 
 fastify.patch("/api/backend-bruno/campaign-end", { preHandler: requireAdmin }, async (req, reply) => {
@@ -1305,7 +1588,11 @@ fastify.post("/api/backend-bruno/raffle/enter", { preHandler: requireAdmin }, as
   }
   if (!ululeCheck.eligible) {
     reply.code(400)
-    return { ok: false, error: "not_ulule_eligible", nextSyncAt: ululeSyncState.nextRunAt }
+    return {
+      ok: false,
+      error: ululeCheck.eligibilityReason === "amount_below_minimum" ? "contribution_too_low" : "not_ulule_eligible",
+      nextSyncAt: ululeSyncState.nextRunAt
+    }
   }
 
   const outcome = addRaffleEntry({
@@ -1313,12 +1600,16 @@ fastify.post("/api/backend-bruno/raffle/enter", { preHandler: requireAdmin }, as
     email: req.body?.email,
     source: "manual",
     firstName: req.body?.firstName,
-    phone: req.body?.phone,
     playerToken: req.body?.token,
     ulule: {
       verifiedAt: new Date().toISOString(),
       hasReward: Boolean(ululeCheck.hasReward),
-      orderTotalCents: Number(ululeCheck.orderTotalCents || 0)
+      orderTotalCents: Number(ululeCheck.orderTotalCents || 0),
+      firstName: ululeCheck.firstName || "",
+      lastInitial: ululeCheck.lastInitial || "",
+      city: ululeCheck.city || "",
+      country: ululeCheck.country || "",
+      departmentCode: ululeCheck.departmentCode || ""
     }
   })
 
@@ -1343,11 +1634,10 @@ fastify.post("/api/raffle/enter", async (req, reply) => {
   }
 
   const firstName = normalizeFirstName(req.body?.firstName)
-  const phone = normalizePhone(req.body?.phone)
   const email = normalizeRaffleEmail(req.body?.email)
   const playerToken = typeof req.body?.token === "string" ? req.body.token : ""
 
-  if (!firstName || !phone || !email) {
+  if (!firstName || !email) {
     reply.code(400)
     return { ok: false, error: "missing_fields" }
   }
@@ -1365,20 +1655,28 @@ fastify.post("/api/raffle/enter", async (req, reply) => {
   }
   if (!ululeCheck.eligible) {
     reply.code(400)
-    return { ok: false, error: "not_ulule_eligible", nextSyncAt: ululeSyncState.nextRunAt }
+    return {
+      ok: false,
+      error: ululeCheck.eligibilityReason === "amount_below_minimum" ? "contribution_too_low" : "not_ulule_eligible",
+      nextSyncAt: ululeSyncState.nextRunAt
+    }
   }
 
   const outcome = addRaffleEntry({
     tier,
     email,
     firstName,
-    phone,
     playerToken,
     source: "player",
     ulule: {
       verifiedAt: new Date().toISOString(),
       hasReward: Boolean(ululeCheck.hasReward),
-      orderTotalCents: Number(ululeCheck.orderTotalCents || 0)
+      orderTotalCents: Number(ululeCheck.orderTotalCents || 0),
+      firstName: ululeCheck.firstName || "",
+      lastInitial: ululeCheck.lastInitial || "",
+      city: ululeCheck.city || "",
+      country: ululeCheck.country || "",
+      departmentCode: ululeCheck.departmentCode || ""
     }
   })
 
@@ -1508,6 +1806,54 @@ fastify.post("/api/backend-bruno/events", { preHandler: requireAdmin }, async (r
   return { ok: true, gameReset: true }
 })
 
+fastify.post("/api/backend-bruno/events/bulk", { preHandler: requireAdmin }, async (req, reply) => {
+  const category = normalizeCategory(req.body?.category)
+  const isMandatory = Boolean(req.body?.is_mandatory)
+  const rawNames = Array.isArray(req.body?.names) ? req.body.names : []
+
+  const normalizedNames = [...new Set(
+    rawNames
+      .filter((name) => typeof name === "string")
+      .map((name) => name.trim())
+      .filter((name) => name && name.length <= 120)
+  )]
+
+  if (normalizedNames.length === 0) {
+    reply.code(400)
+    return { ok: false, error: "invalid_names" }
+  }
+
+  const existingNames = new Set(events.map((event) => event.name.toLowerCase()))
+  const rows = normalizedNames
+    .filter((name) => !existingNames.has(name.toLowerCase()))
+    .map((name) => ({ name, category, is_mandatory: isMandatory }))
+
+  if (rows.length === 0) {
+    return { ok: true, inserted: 0, skipped: normalizedNames.length, gameReset: false }
+  }
+
+  const { error } = await supabase.from("events").insert(rows)
+  if (error) {
+    fastify.log.error({ error }, "Error creating bulk events")
+    reply.code(500)
+    return { ok: false, error: "bulk_create_failed", details: error.message }
+  }
+
+  const ok = await loadEvents()
+  if (!ok) {
+    reply.code(500)
+    return { ok: false, error: "reload_failed" }
+  }
+
+  refreshConnectedPlayers()
+  return {
+    ok: true,
+    inserted: rows.length,
+    skipped: normalizedNames.length - rows.length,
+    gameReset: true
+  }
+})
+
 fastify.patch("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, async (req, reply) => {
   const id = Number(req.params?.id)
   if (!Number.isInteger(id) || id <= 0) {
@@ -1587,6 +1933,36 @@ fastify.patch("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, asy
   return { ok: true, gameReset: false }
 })
 
+fastify.delete("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, async (req, reply) => {
+  const id = Number(req.params?.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    reply.code(400)
+    return { ok: false, error: "invalid_id" }
+  }
+
+  const eventRow = events.find((event) => event.id === id)
+  if (!eventRow) {
+    reply.code(404)
+    return { ok: false, error: "not_found" }
+  }
+
+  const { error } = await supabase.from("events").delete().eq("id", id)
+  if (error) {
+    fastify.log.error({ error }, "Error deleting event")
+    reply.code(500)
+    return { ok: false, error: "delete_failed", details: error.message }
+  }
+
+  const ok = await loadEvents()
+  if (!ok) {
+    reply.code(500)
+    return { ok: false, error: "reload_failed" }
+  }
+
+  refreshConnectedPlayers()
+  return { ok: true, gameReset: true }
+})
+
 async function handleTrigger(req, reply) {
 
   const event = req.body?.event
@@ -1656,6 +2032,7 @@ fastify.get("/*", (req, reply) => {
 const start = async () => {
   try {
     const port = Number(process.env.PORT || 3000)
+    await loadEditableContent()
     await fastify.listen({ port, host: "0.0.0.0" })
     fastify.log.info({ port }, "Server listening")
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
+import OldeupeLogo from "../components/OldeupeLogo.jsx"
 
 export default function AdminRaffle() {
   const navigate = useNavigate()
@@ -7,12 +8,28 @@ export default function AdminRaffle() {
   const [tier, setTier] = useState(1)
   const [entries, setEntries] = useState([])
   const [winner, setWinner] = useState(null)
-  const [email, setEmail] = useState("")
-  const [ulule, setUlule] = useState(null)
   const [loading, setLoading] = useState(false)
   const [spinning, setSpinning] = useState(false)
   const [cursorIndex, setCursorIndex] = useState(0)
   const [status, setStatus] = useState("")
+
+  function formatParticipant(entry) {
+    const firstName = (entry?.firstName || entry?.ulule?.firstName || "").trim()
+    const lastInitial = (entry?.lastInitial || entry?.ulule?.lastInitial || "").trim()
+    const city = (entry?.ulule?.city || "").trim()
+    const country = (entry?.ulule?.country || "").trim()
+    const departmentCode = (entry?.ulule?.departmentCode || "").trim()
+    const countryLower = country.toLowerCase()
+    const isFrance = countryLower === "france" || countryLower === "fr" || countryLower === ""
+    const suffix = isFrance ? departmentCode : country
+    const identity = firstName ? `${firstName}${lastInitial ? ` ${lastInitial}.` : ""}` : "Joueur"
+    if (city && suffix) return `${identity} - ${city} (${suffix})`
+    if (city) return `${identity} - ${city}`
+    if (suffix) return `${identity} (${suffix})`
+    return identity
+  }
+
+  const activeEntry = entries.length > 0 ? entries[cursorIndex % entries.length] : null
 
   const visibleCandidates = useMemo(() => {
     if (entries.length === 0) return []
@@ -40,14 +57,7 @@ export default function AdminRaffle() {
       return null
     }
     setDebug(data)
-    setUlule(data?.ulule || null)
     return data
-  }
-
-  async function loadUluleStatus() {
-    const { response, data } = await fetchJson("/api/backend-bruno/ulule/status")
-    if (!response.ok || !data.ok) return
-    setUlule(data.ulule || null)
   }
 
   async function loadRaffle(nextTier) {
@@ -66,7 +76,6 @@ export default function AdminRaffle() {
       const nextTier = Number(nextDebug?.targetTier || 1)
       setTier(nextTier)
       await loadRaffle(nextTier)
-      await loadUluleStatus()
     } finally {
       setLoading(false)
     }
@@ -106,54 +115,6 @@ export default function AdminRaffle() {
       setTier(nextTier)
       await loadRaffle(nextTier)
       setStatus(`Palier actif: ${data.debug?.targetLabel || `${nextTier} ligne(s)`}`)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function addMockEntries() {
-    setLoading(true)
-    setStatus("")
-    try {
-      const { response, data } = await fetchJson("/api/backend-bruno/raffle/mock", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tier, count: 80 })
-      })
-      if (!response.ok || !data.ok) {
-        setStatus(`Erreur démo: ${data.error || "unknown_error"}`)
-        return
-      }
-      setEntries(data.raffle?.entries || [])
-      setWinner(data.raffle?.winner || null)
-      setStatus(`${data.added || 0} candidats démo ajoutés`)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function addEmailEntry() {
-    if (!email.trim()) return
-    setLoading(true)
-    setStatus("")
-    try {
-      const { response, data } = await fetchJson("/api/backend-bruno/raffle/enter", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tier, email: email.trim() })
-      })
-      if (!response.ok || !data.ok) {
-        if (data.error === "not_ulule_eligible") {
-          setStatus(`Email non éligible Ulule (contrepartie ou don >= 10€). Prochaine synchro: ${data.nextSyncAt || "bientôt"}`)
-          return
-        }
-        setStatus(`Erreur préinscription: ${data.error || "unknown_error"}`)
-        return
-      }
-      setEmail("")
-      setEntries(data.raffle?.entries || [])
-      setWinner(data.raffle?.winner || null)
-      setStatus(data.duplicated ? "Email déjà inscrit sur ce palier" : "Email ajouté")
     } finally {
       setLoading(false)
     }
@@ -209,46 +170,6 @@ export default function AdminRaffle() {
     }
   }
 
-  async function syncUluleNow() {
-    setLoading(true)
-    setStatus("")
-    try {
-      const { response, data } = await fetchJson("/api/backend-bruno/ulule/sync-now", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}"
-      })
-      if (!response.ok || !data.ok) {
-        setStatus(`Erreur sync Ulule: ${data?.result?.error || data?.error || "unknown_error"}`)
-        return
-      }
-      setUlule(data.ulule || null)
-      setStatus(`Sync Ulule OK (${data.result?.updatedOrders || 0} commandes mises à jour)`)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function toggleUluleLiveMode(enabled) {
-    setLoading(true)
-    setStatus("")
-    try {
-      const { response, data } = await fetchJson("/api/backend-bruno/ulule/live-mode", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled })
-      })
-      if (!response.ok || !data.ok) {
-        setStatus(`Erreur mode Ulule: ${data.error || "unknown_error"}`)
-        return
-      }
-      setUlule(data.ulule || null)
-      setStatus(enabled ? "Mode live Ulule activé (30s)" : "Mode live Ulule désactivé (10min)")
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const tierButtons = Array.from({ length: Number(debug?.rows || 0) }, (_, i) => {
     const n = i + 1
     return {
@@ -260,13 +181,15 @@ export default function AdminRaffle() {
   return (
     <div className="raffle-shell">
       <header className="raffle-topbar">
-        <div>
-          <h1>Tirage Bingo Live</h1>
+        <div className="raffle-title-wrap">
+          <OldeupeLogo className="brand-logo raffle-brand-logo" />
+          <span className="raffle-kicker">Bingo Live</span>
+          <h1>Tirage au sort</h1>
           <p>
-            Palier actif: <strong>{debug?.targetLabel || `${tier} ligne`}</strong>
+            Palier en jeu: <strong>{debug?.targetLabel || `${tier} ligne`}</strong>
           </p>
         </div>
-        <div className="row">
+        <div className="row raffle-admin-actions">
           <Link className="btn ghost" to="/admin">
             Retour dashboard
           </Link>
@@ -277,6 +200,8 @@ export default function AdminRaffle() {
       </header>
 
       <section className="raffle-stage">
+        <div className="raffle-orb raffle-orb-left" />
+        <div className="raffle-orb raffle-orb-right" />
         <div className="raffle-stage-head">
           <div className={`raffle-pulse ${spinning ? "on" : ""}`}>TIRAGE {spinning ? "• TOC TOC TOC •" : "PRÊT"}</div>
           <div className="raffle-counts">
@@ -285,11 +210,19 @@ export default function AdminRaffle() {
             <span>Joueurs: <strong>{debug?.players || 0}</strong></span>
           </div>
         </div>
-        <div className="raffle-counts">
-          <span>Ulule: <strong>{ulule?.configured ? "connecté" : "non configuré"}</strong></span>
-          <span>Mode: <strong>{ulule?.liveMode ? "live 30s" : "idle 10min"}</strong></span>
-          <span>Cache: <strong>{ulule?.eligibleEmailsCached || 0} emails</strong></span>
-          <span>Dernière sync: <strong>{ulule?.lastSyncAt || "jamais"}</strong></span>
+
+        <div className="raffle-hero">
+          <div className={`raffle-hero-card ${spinning ? "spinning" : ""} ${winner ? "winner" : ""}`}>
+            <span className="raffle-hero-label">
+              {winner ? "Gagnant sélectionné" : spinning ? "Sélection en cours" : "Candidat au centre"}
+            </span>
+            <strong>{formatParticipant(winner || activeEntry)}</strong>
+            <small>
+              {winner
+                ? `Palier remporté: ${debug?.targetLabel || `${tier} ligne`}`
+                : `${entries.length} candidat${entries.length > 1 ? "s" : ""} en lice`}
+            </small>
+          </div>
         </div>
 
         <div className="raffle-slot">
@@ -301,14 +234,15 @@ export default function AdminRaffle() {
                 key={`${item.entry.id}-${item.index}`}
                 className={`raffle-slot-item ${item.isCenter ? "center" : ""} ${winner?.id === item.entry.id ? "winner" : ""}`}
               >
-                {item.entry.firstName ? `${item.entry.firstName} — ${item.entry.email}` : item.entry.email}
+                <span className="raffle-slot-rank">{String(item.index + 1).padStart(2, "0")}</span>
+                <strong>{formatParticipant(item.entry)}</strong>
               </div>
             ))
           )}
         </div>
 
         <div className="raffle-controls">
-          <div className="row">
+          <div className="row raffle-tier-row">
             {tierButtons.map((item) => (
               <button
                 key={item.tier}
@@ -320,43 +254,17 @@ export default function AdminRaffle() {
               </button>
             ))}
           </div>
-
           <div className="row">
-            <input
-              className="input"
-              type="email"
-              placeholder="email de contribution ulule"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addEmailEntry()
-              }}
-            />
-            <button className="btn ghost" onClick={addEmailEntry} disabled={loading || spinning}>
-              Ajouter email
-            </button>
-            <button className="btn ghost" onClick={addMockEntries} disabled={loading || spinning}>
-              Charger démo
-            </button>
-            <button className="btn ghost" onClick={syncUluleNow} disabled={loading || spinning || !ulule?.configured}>
-              Sync Ulule maintenant
-            </button>
-            <button
-              className="btn ghost"
-              onClick={() => toggleUluleLiveMode(!ulule?.liveMode)}
-              disabled={loading || spinning || !ulule?.configured}
-            >
-              {ulule?.liveMode ? "Passer en 10min" : "Passer en 30s"}
-            </button>
-            <button className="btn" onClick={drawWinner} disabled={loading || spinning || entries.length === 0}>
-              Lancer le tirage
+            <button className="btn raffle-launch" onClick={drawWinner} disabled={loading || spinning || entries.length === 0}>
+              Lancer le tirage - {debug?.targetLabel || `${tier} ligne`}
             </button>
           </div>
         </div>
 
         {winner ? (
           <div className="raffle-winner-banner">
-            Gagnant du palier: <strong>{winner.email}</strong>
+            <span>Gagnant du palier</span>
+            <strong>{formatParticipant(winner)}</strong>
           </div>
         ) : null}
       </section>

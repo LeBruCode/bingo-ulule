@@ -12,6 +12,12 @@ alter table events
 alter table events
   add column if not exists is_mandatory boolean not null default false;
 
+create table if not exists app_content (
+  content_key text primary key,
+  content_value text not null default '',
+  updated_at timestamptz not null default now()
+);
+
 insert into events (name, category) values
   ('Une scene coupee est montree', 'coulisses'),
   ('Une photo backstage est revelee', 'coulisses'),

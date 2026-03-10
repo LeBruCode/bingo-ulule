@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
+import OldeupeLogo from "../components/OldeupeLogo.jsx"
 
 const DEFAULT_CATEGORIES = ["coulisses", "creative", "chat", "public", "dons", "general"]
 
@@ -50,14 +51,13 @@ export default function Admin() {
       const key = `line_${tier}`
       const stats = byLine[key] || { oneAway: 0, missingBuckets: {} }
       const label = tier === rows ? "Carton plein" : `${tier} ligne${tier > 1 ? "s" : ""}`
-      const sortedBuckets = Object.entries(stats.missingBuckets || {})
-        .sort(([a], [b]) => {
-          if (a === "7+") return 1
-          if (b === "7+") return -1
-          return Number(a) - Number(b)
-        })
-        .slice(0, 4)
-      return { key, label, oneAway: stats.oneAway || 0, sortedBuckets }
+      const buckets = stats.missingBuckets || {}
+      const oneAway = Number(stats.oneAway || 0)
+      const twoAway = Number(buckets["2"] || 0)
+      const threeAway = Number(buckets["3"] || 0)
+      const almostThere = oneAway + twoAway
+      const veryClose = oneAway + twoAway + threeAway
+      return { key, label, oneAway, almostThere, veryClose }
     })
   }, [debug])
 
@@ -145,7 +145,24 @@ export default function Admin() {
     const day = String(date.getDate()).padStart(2, "0")
     const hours = String(date.getHours()).padStart(2, "0")
     const minutes = String(date.getMinutes()).padStart(2, "0")
-    return `${year}-${month}-${day}T${hours}:${minutes}`
+    const seconds = String(date.getSeconds()).padStart(2, "0")
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`
+  }
+
+  function formatParticipant(entry) {
+    const firstName = (entry?.firstName || entry?.ulule?.firstName || "").trim()
+    const lastInitial = (entry?.lastInitial || entry?.ulule?.lastInitial || "").trim()
+    const city = (entry?.ulule?.city || "").trim()
+    const country = (entry?.ulule?.country || "").trim()
+    const departmentCode = (entry?.ulule?.departmentCode || "").trim()
+    const countryLower = country.toLowerCase()
+    const isFrance = countryLower === "france" || countryLower === "fr" || countryLower === ""
+    const suffix = isFrance ? departmentCode : country
+    const identity = firstName ? `${firstName}${lastInitial ? ` ${lastInitial}.` : ""}` : "Joueur"
+    if (city && suffix) return `${identity} - ${city} (${suffix})`
+    if (city) return `${identity} - ${city}`
+    if (suffix) return `${identity} (${suffix})`
+    return identity
   }
 
   useEffect(() => {
@@ -513,6 +530,7 @@ export default function Admin() {
     <div className="admin-shell">
       <div className="admin-header">
         <div>
+          <OldeupeLogo className="brand-logo admin-brand-logo" />
           <h1>Tableau de bord live</h1>
         </div>
         <div className="row">
@@ -524,6 +542,9 @@ export default function Admin() {
           </Link>
           <Link className="btn ghost" to="/admin/manage">
             Vue édition
+          </Link>
+          <Link className="btn ghost" to="/admin/content">
+            Textes
           </Link>
           <button className="btn ghost" onClick={logout}>
             Deconnexion
@@ -585,6 +606,7 @@ export default function Admin() {
             <input
               className="input"
               type="datetime-local"
+              step="1"
               value={campaignEndInput}
               onChange={(e) => setCampaignEndInput(e.target.value)}
             />
@@ -592,6 +614,7 @@ export default function Admin() {
               Enregistrer fin campagne
             </button>
           </div>
+          <p className="hint">Date, heure et secondes modifiables. Le compte à rebours joueur se met à jour avec cette valeur exacte.</p>
           <div className="row">
             <input
               className="input"
@@ -625,11 +648,9 @@ export default function Admin() {
                 {progressTiers.map((tier) => (
                   <div key={tier.key} className="winner-card">
                     <span>{tier.label}</span>
-                    <strong>À 1 case: {tier.oneAway}</strong>
+                    <strong>À 1 case du palier: {tier.oneAway}</strong>
                     <small className="hint">
-                      {tier.sortedBuckets.length > 0
-                        ? tier.sortedBuckets.map(([missing, count]) => `${missing} case(s): ${count}`).join(" • ")
-                        : "Aucune donnée"}
+                      Très proches (1-2 cases): {tier.almostThere} • Proches (1-3 cases): {tier.veryClose}
                     </small>
                   </div>
                 ))}
@@ -674,7 +695,7 @@ export default function Admin() {
                 key={entry.id}
                 className={`raffle-item ${index === rouletteIndex ? "active" : ""} ${raffleWinner?.id === entry.id ? "winner" : ""}`}
               >
-                <strong>{entry.email}</strong>
+                <strong>{formatParticipant(entry)}</strong>
                 {entry.ulule ? (
                   <small>
                     Ulule validé • {entry.ulule.hasReward ? "contrepartie" : "don"} • {(entry.ulule.orderTotalCents / 100).toFixed(2)}€
@@ -687,7 +708,7 @@ export default function Admin() {
 
         <p className="hint">Préinscrits: <strong>{raffleEntries.length}</strong></p>
         {raffleWinner ? (
-          <p className="status">Gagnant tiré au sort: <strong>{raffleWinner.email}</strong></p>
+          <p className="status">Gagnant tiré au sort: <strong>{formatParticipant(raffleWinner)}</strong></p>
         ) : null}
       </section>
 

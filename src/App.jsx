@@ -4,6 +4,7 @@ import Admin from "./pages/Admin.jsx"
 import AdminLogin from "./pages/AdminLogin.jsx"
 import AdminManage from "./pages/AdminManage.jsx"
 import AdminRaffle from "./pages/AdminRaffle.jsx"
+import AdminContent from "./pages/AdminContent.jsx"
 import Overlay from "./pages/Overlay.jsx"
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/admin/manage" element={<AdminManage />} />
+        <Route path="/admin/content" element={<AdminContent />} />
         <Route path="/admin/raffle" element={<AdminRaffle />} />
       </Routes>
     </BrowserRouter>

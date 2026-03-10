@@ -1,6 +1,7 @@
 
 import {useEffect,useRef,useState} from "react"
 import {io} from "socket.io-client"
+import OldeupeLogo from "../components/OldeupeLogo.jsx"
 
 let token = localStorage.getItem("bingoToken")
 const socket = io(window.location.origin,{
@@ -13,6 +14,7 @@ export default function Player(){
 
 const [card,setCard]=useState(null)
 const [state,setState]=useState(null)
+const [content,setContent]=useState({})
 const [nowMs,setNowMs]=useState(Date.now())
 const [socketError,setSocketError]=useState("")
 const [freshCells,setFreshCells]=useState(new Set())
@@ -20,12 +22,19 @@ const [raffleOpen,setRaffleOpen]=useState(false)
 const [raffleLoading,setRaffleLoading]=useState(false)
 const [raffleStatus,setRaffleStatus]=useState("")
 const [raffleFirstName,setRaffleFirstName]=useState("")
-const [rafflePhone,setRafflePhone]=useState("")
 const [raffleEmail,setRaffleEmail]=useState("")
 const previousTriggeredRef = useRef(new Set())
 const vibrationTimeoutRef = useRef(null)
 const hapticsUnlockedRef = useRef(false)
 const winnerTierRef = useRef(null)
+
+function t(key,fallback,vars={}){
+ const template = typeof content[key]==="string" && content[key] ? content[key] : fallback
+ return String(template).replace(/\{([a-zA-Z0-9_]+)\}/g,(_,name)=>{
+  const value = vars[name]
+  return value===undefined || value===null ? "" : String(value)
+ })
+}
 
 function triggerHaptics(pattern){
  if(typeof navigator==="undefined" || typeof navigator.vibrate!=="function") return
@@ -48,27 +57,30 @@ const onToken=(t)=>{
  token=t
 }
 
+const onContent=(nextContent)=>setContent(nextContent || {})
 const onCard=(nextCard)=>setCard(nextCard)
 const onState=(nextState)=>setState(nextState)
 const onError=(errorCode)=>{
  if(errorCode==="no_cards_generated"){
-  setSocketError("Initialisation du bingo en cours, reessaie dans quelques secondes.")
+  setSocketError(t("player.no_cards_generated","Initialisation du bingo en cours, reessaie dans quelques secondes."))
   return
  }
  if(typeof errorCode==="string"){
   setSocketError(`Connexion: ${errorCode}`)
   return
  }
- setSocketError("Connexion indisponible temporairement.")
+ setSocketError(t("player.connection_error","Connexion indisponible temporairement."))
 }
 
 socket.on("token",onToken)
+socket.on("content",onContent)
 socket.on("card",onCard)
 socket.on("state",onState)
 socket.on("error",onError)
 
 return ()=>{
  socket.off("token",onToken)
+ socket.off("content",onContent)
  socket.off("card",onCard)
  socket.off("state",onState)
  socket.off("error",onError)
@@ -138,6 +150,8 @@ const tierProgress = Array.from({length:boardRows},(_,index)=>{
  const label=tier===boardRows?"Carton plein":`${tier} ligne${tier>1?"s":""}`
  return {tier,label,missing}
 })
+const currentTargetTier = Number(state?.phase?.targetTier || 1)
+const currentTierProgress = tierProgress.find(({tier})=>tier===currentTargetTier) || null
 
 function winnerTokensForTier(tier){
  const byLine = state?.winners?.byLine
@@ -149,9 +163,10 @@ function winnerTokensForTier(tier){
  return []
 }
 
-const wonTier = tierProgress.find(({tier})=>winnerTokensForTier(tier).includes(token))
+const isQualifiedForCurrentTier = winnerTokensForTier(currentTargetTier).includes(token)
 const campaignEndAtMs = state?.campaign?.endAt ? Date.parse(state.campaign.endAt) : null
 const campaignRemainingMs = campaignEndAtMs ? Math.max(0,campaignEndAtMs - nowMs) : null
+const countdownParts = campaignRemainingMs && campaignRemainingMs > 0 ? splitRemaining(campaignRemainingMs) : null
 const liveStreamUrl = state?.liveStream?.url || ""
 
 function parseYouTubeVideoId(rawUrl){
@@ -215,19 +230,34 @@ function formatRemaining(ms){
  return `${String(hours).padStart(2,"0")}h ${String(minutes).padStart(2,"0")}m ${String(seconds).padStart(2,"0")}s`
 }
 
+function splitRemaining(ms){
+ const totalSeconds = Math.floor(ms/1000)
+ const days = Math.floor(totalSeconds/86400)
+ const hours = Math.floor((totalSeconds%86400)/3600)
+ const minutes = Math.floor((totalSeconds%3600)/60)
+ const seconds = totalSeconds%60
+ return {days,hours,minutes,seconds}
+}
+
 useEffect(()=>{
  if(!card) return
- if(!wonTier) return
- if(winnerTierRef.current===wonTier.tier) return
- winnerTierRef.current = wonTier.tier
+ if(!isQualifiedForCurrentTier || !currentTierProgress) return
+ if(winnerTierRef.current===currentTierProgress.tier) return
+ winnerTierRef.current = currentTierProgress.tier
  setRaffleOpen(true)
  triggerHaptics([120,60,120,60,180])
-},[wonTier,card])
+},[isQualifiedForCurrentTier,currentTierProgress,card])
+
+useEffect(()=>{
+ if(isQualifiedForCurrentTier) return
+ setRaffleOpen(false)
+ setRaffleStatus("")
+},[isQualifiedForCurrentTier,currentTargetTier])
 
 async function submitRaffleEntry(){
- if(!wonTier) return
- if(!raffleFirstName.trim() || !rafflePhone.trim() || !raffleEmail.trim()){
-  setRaffleStatus("Merci de remplir prénom, téléphone et email.")
+ if(!currentTierProgress) return
+ if(!raffleFirstName.trim() || !raffleEmail.trim()){
+  setRaffleStatus(t("player.error_missing_fields","Merci de remplir ton prenom et l'email utilise pour ta contribution Ulule."))
   return
  }
  setRaffleLoading(true)
@@ -237,31 +267,37 @@ async function submitRaffleEntry(){
    method:"POST",
    headers:{"content-type":"application/json"},
    body:JSON.stringify({
-    tier:wonTier.tier,
+    tier:currentTierProgress.tier,
     firstName:raffleFirstName,
-    phone:rafflePhone,
     email:raffleEmail,
     token
    })
   })
   const data = await response.json().catch(()=>({}))
   if(!response.ok || !data.ok){
+   if(data.error==="contribution_too_low"){
+    setRaffleStatus(t("player.error_contribution_too_low","Une contribution existe bien pour cet email sur Ulule, mais son montant est inferieur a 10 EUR. Pour participer au tirage, la contribution ou le don doit etre d'au moins 10 EUR."))
+    return
+   }
    if(data.error==="not_ulule_eligible"){
-    setRaffleStatus("Email non éligible: contribution avec contrepartie ou don >= 10€ requis.")
+    setRaffleStatus(t("player.error_not_ulule_eligible","Aucune contribution eligible n'a ete trouvee pour cet email sur Ulule. Verifie que l'email est correct, ou contribue avec cet email avec une contrepartie ou un don d'au moins 10 EUR."))
     return
    }
    if(data.error==="already_won"){
-    setRaffleStatus("Cet email a déjà gagné.")
+    setRaffleStatus(t("player.error_already_won","Cet email a deja gagne."))
     return
    }
    if(data.error==="not_qualified_for_tier"){
-    setRaffleStatus("Ta qualification n'est plus active pour ce palier.")
+    setRaffleStatus(t("player.error_not_qualified","Ta qualification n'est plus active pour ce palier."))
     return
    }
-   setRaffleStatus(`Erreur: ${data.error || "unknown_error"}`)
+   setRaffleStatus(t("player.error_generic","Erreur : {error}",{error:data.error || "unknown_error"}))
    return
   }
-  setRaffleStatus(data.duplicated ? "Email déjà inscrit pour ce palier." : "Inscription au tirage validée.")
+  setRaffleStatus(data.duplicated
+   ? t("player.success_duplicate","Email deja inscrit pour ce palier.")
+   : t("player.success_validated","Inscription au tirage validee.")
+  )
   setRaffleOpen(false)
  }finally{
   setRaffleLoading(false)
@@ -272,8 +308,9 @@ if(!card) return (
 <div className="player-shell">
  <div className="player-stage">
   <div className="player-head">
-   <h1>Bingo Live</h1>
-   <p>{socketError || "Chargement de la carte..."}</p>
+   <OldeupeLogo className="brand-logo player-brand-logo" />
+   <h1>{t("player.title","Bingo Live")}</h1>
+   <p>{socketError || t("player.loading_card","Chargement de la carte...")}</p>
   </div>
  </div>
 </div>
@@ -284,72 +321,111 @@ return(
 <div className="player-stage">
 
 <div className="player-head">
- <h1>Bingo Live</h1>
- <p>Campagne en direct</p>
- <p>Palier en cours: {state?.phase?.targetLabel || "1 ligne"}</p>
- {campaignRemainingMs !== null && (
-  <p className="campaign-countdown">
-   {campaignRemainingMs > 0 ? `Fin de campagne dans: ${formatRemaining(campaignRemainingMs)}` : "Campagne terminée"}
-  </p>
- )}
- <span className="player-counter">{activeCount}/{card.length} cases actives</span>
- {liveStreamUrl && (
-  <button className="btn ghost raffle-cta" onClick={openLiveLink}>
-   Rejoindre le live YouTube
-  </button>
- )}
- {wonTier && (
-  <button className="btn raffle-cta" onClick={()=>setRaffleOpen(true)}>
-   Participer au tirage au sort
-  </button>
- )}
+ <div className="player-hero">
+  <div className="player-hero-copy">
+   <OldeupeLogo className="brand-logo player-brand-logo" />
+   <span className="player-kicker">{t("player.subtitle","Campagne en direct")}</span>
+   <h1>{t("player.title","Bingo Live")}</h1>
+   <p className="player-phase-lead">{t("player.phase_prefix","Palier en cours : {label}",{label:state?.phase?.targetLabel || "1 ligne"})}</p>
+   <div className="player-meta">
+    <span className="player-counter">{activeCount}/{card.length} cases actives</span>
+    {isQualifiedForCurrentTier && currentTierProgress ? (
+     <span className="player-qualified-pill">Qualifie pour {currentTierProgress.label}</span>
+    ) : null}
+   </div>
+  </div>
+
+  <div className="player-hero-side">
+   <div className="phase-spotlight">
+    <span className="phase-spotlight-label">Manche en cours</span>
+    <strong>{state?.phase?.targetLabel || "1 ligne"}</strong>
+    {currentTierProgress ? (
+     <small>
+      {currentTierProgress.missing===0
+       ? "Ta carte est eligible au tirage"
+       : `Encore ${currentTierProgress.missing} case${currentTierProgress.missing>1?"s":""} pour ce palier`}
+     </small>
+    ) : null}
+   </div>
+  </div>
+ </div>
+
+ <div className="player-toolbar">
+  {campaignRemainingMs !== null && (
+   <div className="player-countdown-card">
+    <div className="campaign-countdown-head">
+     <p className="campaign-countdown">
+      {campaignRemainingMs > 0 ? t("player.countdown_label","Fin de campagne dans") : t("player.countdown_ended","Campagne terminee")}
+     </p>
+     {campaignRemainingMs > 0 && <span className="campaign-countdown-live-dot">En direct</span>}
+    </div>
+    {campaignRemainingMs > 0 && (
+     <div className="countdown-grid">
+      <div className="countdown-cell"><strong>{String(countdownParts?.days ?? 0).padStart(2,"0")}</strong><span>{t("player.countdown_days","Jours")}</span></div>
+      <div className="countdown-cell"><strong>{String(countdownParts?.hours ?? 0).padStart(2,"0")}</strong><span>{t("player.countdown_hours","Heures")}</span></div>
+      <div className="countdown-cell"><strong>{String(countdownParts?.minutes ?? 0).padStart(2,"0")}</strong><span>{t("player.countdown_minutes","Minutes")}</span></div>
+      <div className="countdown-cell"><strong>{String(countdownParts?.seconds ?? 0).padStart(2,"0")}</strong><span>{t("player.countdown_seconds","Secondes")}</span></div>
+     </div>
+    )}
+    {campaignRemainingMs > 0 && <p className="campaign-countdown-sub">{formatRemaining(campaignRemainingMs)}</p>}
+   </div>
+  )}
+
+  <div className="player-actions">
+   {liveStreamUrl && (
+    <button className="btn ghost raffle-cta" onClick={openLiveLink}>
+     {t("player.join_live_button","Rejoindre le live YouTube")}
+    </button>
+   )}
+   {isQualifiedForCurrentTier && currentTierProgress && (
+    <button className="btn raffle-cta" onClick={()=>setRaffleOpen(true)}>
+     {t("player.raffle_button","Participer au tirage au sort")}
+    </button>
+   )}
+  </div>
+ </div>
 </div>
 
 <div className="player-progress">
  {tierProgress.map(({tier,label,missing})=>(
-  <div key={tier} className={"progress-item "+(missing===0?"done":"")}>
+  <div key={tier} className={"progress-item "+(missing===0?"done":"")+(tier===currentTargetTier?" current":"")}>
    <span>{label}</span>
-   <strong>{missing===0?"Prêt":`Il manque ${missing} case${missing>1?"s":""}`}</strong>
+   <strong>{missing===0?t("player.progress_ready","Eligible au tirage"):t("player.progress_missing","Il manque {missing} case{plural}",{missing,plural:missing>1?"s":""})}</strong>
   </div>
  ))}
 </div>
 
-{wonTier && (
+{isQualifiedForCurrentTier && currentTierProgress && (
  <div className="winner-banner">
-  Tu as gagné le palier: <strong>{wonTier.label}</strong>
+  {t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:currentTierProgress.label})}
  </div>
 )}
 
 {raffleStatus && <p className="status">{raffleStatus}</p>}
 
-{wonTier && raffleOpen && (
+{isQualifiedForCurrentTier && currentTierProgress && raffleOpen && (
  <div className="raffle-modal-backdrop">
-  <div className="raffle-modal">
-   <h2>Participer au tirage</h2>
-   <p>Tu es qualifié pour <strong>{wonTier.label}</strong>. Renseigne tes infos de contribution.</p>
+ <div className="raffle-modal">
+   <h2>{t("player.modal_title","Participer au tirage")}</h2>
+   <p>{t("player.modal_body","Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",{label:currentTierProgress.label})}</p>
+   {raffleStatus && <p className="status">{raffleStatus}</p>}
    <input
     className="input"
-    placeholder="Prénom"
+    placeholder={t("player.modal_first_name","Prenom")}
     value={raffleFirstName}
     onChange={(e)=>setRaffleFirstName(e.target.value)}
    />
    <input
     className="input"
-    placeholder="Téléphone"
-    value={rafflePhone}
-    onChange={(e)=>setRafflePhone(e.target.value)}
-   />
-   <input
-    className="input"
     type="email"
-    placeholder="Email utilisé sur Ulule"
+    placeholder={t("player.modal_email","Email utilise sur Ulule")}
     value={raffleEmail}
     onChange={(e)=>setRaffleEmail(e.target.value)}
    />
    <div className="row">
-    <button className="btn ghost" onClick={()=>setRaffleOpen(false)} disabled={raffleLoading}>Fermer</button>
+    <button className="btn ghost" onClick={()=>setRaffleOpen(false)} disabled={raffleLoading}>{t("player.modal_close","Fermer")}</button>
     <button className="btn" onClick={submitRaffleEntry} disabled={raffleLoading}>
-     {raffleLoading ? "Vérification..." : "Valider ma participation"}
+     {raffleLoading ? t("player.modal_submit_loading","Verification...") : t("player.modal_submit","Valider ma participation")}
     </button>
    </div>
   </div>
