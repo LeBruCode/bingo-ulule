@@ -15,6 +15,7 @@ export default function Player(){
 const [card,setCard]=useState(null)
 const [state,setState]=useState(null)
 const [content,setContent]=useState({})
+const [uiSettings,setUiSettings]=useState({playerDensityMode:"lisible",playerFullscreenMode:false})
 const [nowMs,setNowMs]=useState(Date.now())
 const [socketError,setSocketError]=useState("")
 const [freshCells,setFreshCells]=useState(new Set())
@@ -59,6 +60,8 @@ const playerShellStyle = {
  "--player-mobile-progress-size": cssRemSetting("player.mobile_progress_size",1.16,0.95,3.2),
  "--player-mobile-card-text-size": cssRemSetting("player.mobile_card_text_size",1.42,0.95,4)
 }
+const densityMode = uiSettings?.playerDensityMode==="compact" || uiSettings?.playerDensityMode==="geant" ? uiSettings.playerDensityMode : "lisible"
+const playerShellClass = `player-shell player-mode-${densityMode}${uiSettings?.playerFullscreenMode ? " player-fullscreen-mode" : ""}`
 
 function triggerHaptics(pattern){
  if(typeof navigator==="undefined" || typeof navigator.vibrate!=="function") return
@@ -82,12 +85,13 @@ const onToken=(t)=>{
 }
 
 const onContent=(nextContent)=>setContent(nextContent || {})
+const onUiSettings=(nextSettings)=>setUiSettings(nextSettings || {playerDensityMode:"lisible",playerFullscreenMode:false})
 const onCard=(nextCard)=>setCard(nextCard)
 const onPlayerMeta=(nextMeta)=>setPlayerMeta(nextMeta || {raffleEnteredTiers:[]})
 const onState=(nextState)=>setState(nextState)
 const onError=(errorCode)=>{
  if(errorCode==="no_cards_generated"){
-  setSocketError(t("player.no_cards_generated","Initialisation du bingo en cours, reessaie dans quelques secondes."))
+  setSocketError(t("player.no_cards_generated","Initialisation du bingo en cours, réessaie dans quelques secondes."))
   return
  }
  if(typeof errorCode==="string"){
@@ -99,6 +103,7 @@ const onError=(errorCode)=>{
 
 socket.on("token",onToken)
 socket.on("content",onContent)
+socket.on("ui-settings",onUiSettings)
 socket.on("card",onCard)
 socket.on("player-meta",onPlayerMeta)
 socket.on("state",onState)
@@ -107,6 +112,7 @@ socket.on("error",onError)
 return ()=>{
  socket.off("token",onToken)
  socket.off("content",onContent)
+ socket.off("ui-settings",onUiSettings)
  socket.off("card",onCard)
  socket.off("player-meta",onPlayerMeta)
  socket.off("state",onState)
@@ -173,6 +179,11 @@ const lineGroups = Array.from({length:boardRows},(_,rowIndex)=>
 const rowMissingCounts = lineGroups.map((line)=>
  line.reduce((missing,eventName)=>missing+(state?.triggered.includes(eventName)?0:1),0)
 )
+const rowProgress = rowMissingCounts.map((missing)=>({
+ missing,
+ active:Math.max(0,boardCols-missing),
+ ratio:boardCols>0 ? Math.max(0,Math.min(1,(boardCols-missing)/boardCols)) : 0
+}))
 const sortedMissingCounts = [...rowMissingCounts].sort((a,b)=>a-b)
 function formatTierLabel(tier,totalRows){
  if(tier===totalRows) return "carton plein"
@@ -189,7 +200,8 @@ const tierProgress = Array.from({length:boardRows},(_,index)=>{
  const missing=sortedMissingCounts.slice(0,tier).reduce((sum,value)=>sum+value,0)
  const label=formatTierLabel(tier,boardRows)
  const shortLabel=formatTierLabel(tier,boardRows)
- return {tier,label,shortLabel,missing}
+ const totalCells = tier*boardCols
+ return {tier,label,shortLabel,missing,totalCells,ratio:totalCells>0 ? Math.max(0,Math.min(1,(totalCells-missing)/totalCells)) : 0}
 })
 const currentTargetTier = Number(state?.phase?.targetTier || 1)
 const currentTierProgress = tierProgress.find(({tier})=>tier===currentTargetTier) || null
@@ -232,7 +244,7 @@ function winnerTokensForTier(tier){
  return []
 }
 
-const isQualifiedForCurrentTier = winnerTokensForTier(currentTargetTier).includes(token)
+const isQualifiedForCurrentTier = Boolean(currentTierProgress && currentTierProgress.missing===0)
 const campaignEndAtMs = state?.campaign?.endAt ? Date.parse(state.campaign.endAt) : null
 const campaignRemainingMs = campaignEndAtMs ? Math.max(0,campaignEndAtMs - nowMs) : null
 const countdownParts = campaignRemainingMs && campaignRemainingMs > 0 ? splitRemaining(campaignRemainingMs) : null
@@ -243,6 +255,7 @@ const gameFallbackActive = Boolean(state?.game?.fallbackActive)
 const liveMessage = typeof content["player.live_message"]==="string" ? content["player.live_message"].trim() : ""
 const raffleEnteredTiers = Array.isArray(playerMeta?.raffleEnteredTiers) ? playerMeta.raffleEnteredTiers : []
 const hasEnteredCurrentTierRaffle = raffleEnteredTiers.includes(currentTargetTier)
+const hasWonAnyRaffle = Boolean(playerMeta?.hasWonAnyRaffle)
 
 function parseYouTubeVideoId(rawUrl){
  if(typeof rawUrl!=="string" || !rawUrl.trim()) return ""
@@ -336,6 +349,13 @@ useEffect(()=>{
 },[isQualifiedForCurrentTier,currentTargetTier])
 
 useEffect(()=>{
+ if(!hasWonAnyRaffle) return
+ setRaffleOpen(false)
+ setRaffleLoading(false)
+ setRaffleStatus("")
+},[hasWonAnyRaffle])
+
+useEffect(()=>{
  if(!hasEnteredCurrentTierRaffle) return
  setRaffleOpen(false)
  setRaffleLoading(false)
@@ -359,7 +379,7 @@ useEffect(()=>{
 async function submitRaffleEntry(){
  if(!currentTierProgress) return
  if(!raffleFirstName.trim() || !raffleEmail.trim()){
-  setRaffleStatus(t("player.error_missing_fields","Merci de remplir ton prenom et l'email utilise pour ta contribution Ulule."))
+    setRaffleStatus(t("player.error_missing_fields","Merci de remplir ton prénom et l'e-mail utilisé pour ta contribution Ulule."))
   return
  }
  setRaffleLoading(true)
@@ -378,23 +398,27 @@ async function submitRaffleEntry(){
   const data = await response.json().catch(()=>({}))
   if(!response.ok || !data.ok){
    if(data.error==="contribution_too_low"){
-    setRaffleStatus(t("player.error_contribution_too_low","Une contribution existe bien pour cet email sur Ulule, mais son montant est inferieur a 10 EUR. Pour participer au tirage, la contribution ou le don doit etre d'au moins 10 EUR."))
+    setRaffleStatus(t("player.error_contribution_too_low","Une contribution existe bien pour cet e-mail sur Ulule, mais son montant est inférieur à 10 EUR. Pour participer au tirage, la contribution ou le don doit être d'au moins 10 EUR."))
     return
    }
    if(data.error==="not_ulule_eligible"){
-    setRaffleStatus(t("player.error_not_ulule_eligible","Aucune contribution eligible n'a ete trouvee pour cet email sur Ulule. Verifie que l'email est correct, ou contribue avec cet email avec une contrepartie ou un don d'au moins 10 EUR."))
+    setRaffleStatus(t("player.error_not_ulule_eligible","Aucune contribution éligible n'a été trouvée pour cet e-mail sur Ulule. Vérifie que l'e-mail est correct, ou contribue avec cet e-mail avec une contrepartie ou un don d'au moins 10 EUR."))
     return
    }
    if(data.error==="not_qualified_for_tier"){
     setRaffleStatus(t("player.error_not_qualified","Ta qualification n'est plus active pour ce palier."))
     return
    }
+   if(data.error==="already_won_bingo"){
+    setRaffleStatus("Tu as déjà gagné un tirage au sort. Ta carte n'est plus en jeu pour les manches suivantes.")
+    return
+   }
    setRaffleStatus(t("player.error_generic","Erreur : {error}",{error:data.error || "unknown_error"}))
    return
   }
   setRaffleStatus(data.duplicated
-   ? t("player.success_duplicate","Email deja inscrit pour ce palier.")
-   : t("player.success_validated","Inscription au tirage validee.")
+   ? t("player.success_duplicate","E-mail déjà inscrit pour ce palier.")
+   : t("player.success_validated","Inscription au tirage validée.")
   )
   setPlayerMeta((prev)=>({
    ...prev,
@@ -407,7 +431,7 @@ async function submitRaffleEntry(){
 }
 
 if(!card) return (
-<div className="player-shell" style={playerShellStyle}>
+<div className={playerShellClass} style={playerShellStyle}>
  <div className="player-stage">
   <div className="player-head">
    <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
@@ -419,7 +443,7 @@ if(!card) return (
 )
 
 return(
-<div className="player-shell" style={playerShellStyle}>
+<div className={playerShellClass} style={playerShellStyle}>
 <div className="player-stage">
 
 <div className="player-head">
@@ -442,7 +466,7 @@ return(
     {currentTierProgress ? (
      <small>
        {currentTierProgress.missing===0
-       ? "Ta carte est eligible au tirage"
+       ? "Ta carte est éligible au tirage"
        : `Encore ${currentTierProgress.missing} case${currentTierProgress.missing>1?"s":""} pour ce palier`}
      </small>
     ) : null}
@@ -455,7 +479,7 @@ return(
    <div className="player-countdown-card">
     <div className="campaign-countdown-head">
      <p className="campaign-countdown">
-      {campaignRemainingMs > 0 ? t("player.countdown_label","Fin de campagne dans") : t("player.countdown_ended","Campagne terminee")}
+      {campaignRemainingMs > 0 ? t("player.countdown_label","Fin de campagne dans") : t("player.countdown_ended","Campagne terminée")}
      </p>
      {campaignRemainingMs > 0 && <span className="campaign-countdown-live-dot">En direct</span>}
     </div>
@@ -483,7 +507,7 @@ return(
     {t("player.join_ulule_button","Voir la page Ulule")}
    </button>
   )}
-   {isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && (
+   {isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && (
     <button className="btn raffle-cta" onClick={()=>setRaffleOpen(true)}>
      {t("player.raffle_button","Participer au tirage au sort")}
     </button>
@@ -495,58 +519,65 @@ return(
  <section className="game-ended-panel">
   <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
   <h2>{t("player.fallback_title","Jeu indisponible")}</h2>
-  <p>{t("player.fallback_body","En raison de problemes techniques, nous ne sommes malheureusement pas en mesure de pouvoir vous proposer ce jeu. Nous vous remercions toutefois pour votre participation. A tres vite.")}</p>
+  <p>{t("player.fallback_body","En raison de problèmes techniques, nous ne sommes malheureusement pas en mesure de pouvoir vous proposer ce jeu. Nous vous remercions toutefois pour votre participation. À très vite.")}</p>
  </section>
 ) : gameEnded ? (
  <section className="game-ended-panel">
   <OldeupeLogo className="brand-logo player-brand-logo" src={logoSrc} />
-  <h2>{t("player.game_ended_title","Jeu termine")}</h2>
+  <h2>{t("player.game_ended_title","Jeu terminé")}</h2>
   <p>{t("player.game_ended_body","Merci a tous pour votre participation.")}</p>
  </section>
 ) : (
 <>
 {currentReward ? (
  <div className="current-reward-banner">
-  <span>{t("player.current_reward_label","A gagner")}</span>
+  <span>{t("player.current_reward_label","À gagner")}</span>
   <strong>{currentReward}</strong>
  </div>
 ) : null}
 <div className="player-progress">
-  {tierProgress.map(({tier,label,missing})=>(
+  {tierProgress.map(({tier,label,missing,ratio})=>(
   <div key={tier} className={"progress-item "+(missing===0?"done":"")+(tier===currentTargetTier?" current":"")}>
    <span>{label}</span>
    <strong>
     {missing!==0
      ? t("player.progress_missing","Il manque {missing} case{plural}",{missing,plural:missing>1?"s":""})
      : tier<currentTargetTier
-      ? t("player.progress_closed","Tirage termine")
+      ? t("player.progress_closed","Tirage terminé")
       : tier===currentTargetTier
-       ? t("player.progress_ready","Eligible au tirage")
+       ? t("player.progress_ready","Éligible au tirage")
        : t("player.progress_waiting_round","En attente de cette manche")}
    </strong>
+   <div className="progress-gauge" aria-hidden="true">
+    <span style={{width:`${Math.round(ratio*100)}%`}} />
+   </div>
   </div>
  ))}
 </div>
 
-{isQualifiedForCurrentTier && currentTierProgress && (
- <div className="winner-banner">
+{hasWonAnyRaffle ? (
+ <div className="winner-banner registered">
+  Tu as déjà gagné un tirage au sort. Ta carte n&apos;est plus en jeu pour les manches suivantes.
+ </div>
+) : isQualifiedForCurrentTier && currentTierProgress && (
+ <div className={`winner-banner ${hasEnteredCurrentTierRaffle ? "registered" : ""}`}>
   {hasEnteredCurrentTierRaffle
    ? t("player.raffle_registered_banner","Ta participation au tirage au sort est bien prise en compte.")
-   : t("player.qualified_banner","Tu as complete {label}. Tu peux participer au tirage au sort.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}
+   : t("player.qualified_banner","Tu as complété {label}. Tu peux participer au tirage au sort.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}
  </div>
 )}
 
 {raffleStatus && <p className="status">{raffleStatus}</p>}
 
-{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && raffleOpen && (
+{isQualifiedForCurrentTier && currentTierProgress && !hasEnteredCurrentTierRaffle && !hasWonAnyRaffle && raffleOpen && (
  <div className="raffle-modal-backdrop">
  <div className="raffle-modal">
    <h2>{t("player.modal_title","Participer au tirage")}</h2>
-   <p>{t("player.modal_body","Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}</p>
+   <p>{t("player.modal_body","Tu es qualifié pour {label}. Renseigne le prénom et l'adresse e-mail utilisée pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit être d'au moins 10 EUR.",{label:formatTierSentenceLabel(currentTierProgress.tier,boardRows)})}</p>
    {raffleStatus && <p className="status">{raffleStatus}</p>}
    <input
     className="input"
-    placeholder={t("player.modal_first_name","Prenom")}
+    placeholder={t("player.modal_first_name","Prénom")}
     value={raffleFirstName}
     onChange={(e)=>setRaffleFirstName(e.target.value)}
    />
@@ -560,7 +591,7 @@ return(
    <div className="row">
     <button className="btn ghost" onClick={()=>setRaffleOpen(false)} disabled={raffleLoading}>{t("player.modal_close","Fermer")}</button>
     <button className="btn" onClick={submitRaffleEntry} disabled={raffleLoading}>
-     {raffleLoading ? t("player.modal_submit_loading","Verification...") : t("player.modal_submit","Valider ma participation")}
+     {raffleLoading ? t("player.modal_submit_loading","Vérification...") : t("player.modal_submit","Valider ma participation")}
     </button>
    </div>
   </div>
@@ -588,13 +619,19 @@ return(
 
 <div className="mobile-lines">
 {lineGroups.map((line,lineIndex)=>{
- const lineActiveCount = line.filter((eventName)=>state?.triggered.includes(eventName)).length
+ const lineStats = rowProgress[lineIndex] || {active:0,missing:boardCols,ratio:0}
  return(
  <section key={lineIndex} className="line-block">
   <header className="line-head">
-   <strong>Ligne {lineIndex+1}</strong>
-   <span>{lineActiveCount}/{boardCols}</span>
+   <div className="line-head-copy">
+    <strong>Ligne {lineIndex+1}</strong>
+    <small>{lineStats.missing===0 ? "Ligne complète" : `${lineStats.missing} case${lineStats.missing>1?"s":""} restante${lineStats.missing>1?"s":""}`}</small>
+   </div>
+   <span>{lineStats.active}/{boardCols}</span>
   </header>
+  <div className="line-gauge" aria-hidden="true">
+   <span style={{width:`${Math.round(lineStats.ratio*100)}%`}} />
+  </div>
 
   <div className="line-list">
   {line.map((eventName,colIndex)=>{

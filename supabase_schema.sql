@@ -24,6 +24,12 @@ create table if not exists app_state (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists app_ui_settings (
+  setting_key text primary key,
+  setting_value jsonb not null default 'null'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 insert into events (name, category) values
   ('Une scene coupee est montree', 'coulisses'),
   ('Une photo backstage est revelee', 'coulisses'),

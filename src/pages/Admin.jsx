@@ -16,6 +16,7 @@ export default function Admin() {
   const [ululePageInput, setUlulePageInput] = useState("")
   const [liveMessage, setLiveMessage] = useState("")
   const [tierRewards, setTierRewards] = useState({})
+  const [raffleQuotas, setRaffleQuotas] = useState({})
   const [events, setEvents] = useState([])
   const [draggedEventId, setDraggedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -23,7 +24,7 @@ export default function Admin() {
   const [raffleLoading, setRaffleLoading] = useState(false)
   const [raffleEmail, setRaffleEmail] = useState("")
   const [raffleEntries, setRaffleEntries] = useState([])
-  const [raffleWinner, setRaffleWinner] = useState(null)
+  const [raffleWinners, setRaffleWinners] = useState([])
   const [rouletteIndex, setRouletteIndex] = useState(0)
   const [rouletteSpinning, setRouletteSpinning] = useState(false)
   const [status, setStatus] = useState("")
@@ -76,6 +77,27 @@ export default function Admin() {
     })
   }, [debug])
 
+  const roundTimeline = useMemo(() => {
+    const rows = Number(debug?.rows || 0)
+    if (!rows) return []
+    return Array.from({ length: rows }, (_, index) => {
+      const tier = index + 1
+      const key = `line_${tier}`
+      const winnersCount = Number(debug?.raffle?.byTier?.[key]?.winnersCount || 0)
+      const quota = Number(debug?.raffle?.byTier?.[key]?.quota || 1)
+      let state = "upcoming"
+      if (winnersCount > 0) state = "drawn"
+      else if (tier === Number(debug?.targetTier || 1)) state = "active"
+      return {
+        tier,
+        label: tier === rows ? "Carton plein" : `${tier} ligne${tier > 1 ? "s" : ""}`,
+        state,
+        winnersCount,
+        quota
+      }
+    })
+  }, [debug])
+
   const eventsByCategory = useMemo(() => {
     const grouped = {}
     for (const category of categories) grouped[category] = []
@@ -114,6 +136,20 @@ export default function Admin() {
     return errorCode || "unknown_error"
   }
 
+  function formatDateTime(value) {
+    if (!value) return "Jamais"
+    const date = new Date(value)
+    if (!Number.isFinite(date.getTime())) return "Jamais"
+    return date.toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    })
+  }
+
   async function loadDashboard() {
     setLoading(true)
     setStatus("")
@@ -145,6 +181,13 @@ export default function Admin() {
         setTierRewards(contentCall.data.content || {})
         setLiveMessage(contentCall.data.content?.["player.live_message"] || "")
       }
+      const quotas = {}
+      Array.from({ length: Number(bootstrapCall.data.debug?.rows || 0) }, (_, index) => {
+        const tier = index + 1
+        quotas[`line_${tier}`] = Number(bootstrapCall.data.debug?.raffle?.byTier?.[`line_${tier}`]?.quota || 1)
+        return tier
+      })
+      setRaffleQuotas(quotas)
       await loadRaffle(bootstrapCall.data.debug?.targetTier || 1)
       if (bootstrapCall.data.bootstrapping) {
         setStatus("Initialisation des cartes en cours...")
@@ -191,6 +234,17 @@ export default function Admin() {
     loadDashboard()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    const rows = Number(debug?.rows || 0)
+    if (!rows) return
+    const nextQuotas = {}
+    for (let index = 0; index < rows; index += 1) {
+      const tier = index + 1
+      nextQuotas[`line_${tier}`] = Number(debug?.raffle?.byTier?.[`line_${tier}`]?.quota || 1)
+    }
+    setRaffleQuotas(nextQuotas)
+  }, [debug?.rows, debug?.raffle])
 
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -321,7 +375,35 @@ export default function Admin() {
         return
       }
 
-      setStatus("Manche réinitialisée")
+        setStatus("Manche réinitialisée")
+      await loadDashboard()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function resetAll() {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm("Tout réinitialiser ? Les cartes, attributions joueurs, tirages, gagnants et préinscriptions seront effacés.")
+      if (!confirmed) return
+    }
+
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/reset-all", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur reset total: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setStatus("Réinitialisation complète effectuée")
       await loadDashboard()
     } finally {
       setLoading(false)
@@ -478,6 +560,41 @@ export default function Admin() {
     }
   }
 
+  async function saveRaffleQuotas() {
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const rows = Number(debug?.rows || 0)
+      const quotas = {}
+      for (let index = 0; index < rows; index += 1) {
+        const tier = index + 1
+        quotas[`line_${tier}`] = Number(raffleQuotas[`line_${tier}`] || 1)
+      }
+
+      const { response, data } = await fetchJson("/api/backend-bruno/raffle-quotas", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ quotas })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur gagnants par manche: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setDebug(data.debug || null)
+      const nextQuotas = {}
+      ;(data.quotas || []).forEach((value, index) => {
+        nextQuotas[`line_${index + 1}`] = Number(value || 1)
+      })
+      setRaffleQuotas(nextQuotas)
+      setStatus("Nombre de gagnants enregistré")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function chooseTargetTier(tier) {
     setTierLoading(true)
     setStatus("")
@@ -516,7 +633,7 @@ export default function Admin() {
         return
       }
       setDebug(data.debug || null)
-      setStatus(nextEnded ? "Jeu termine pour tous les joueurs" : "Jeu rouvert")
+      setStatus(nextEnded ? "Jeu terminé pour tous les joueurs" : "Jeu rouvert")
     } finally {
       setLoading(false)
     }
@@ -549,7 +666,7 @@ export default function Admin() {
     const { response, data } = await fetchJson(`/api/backend-bruno/raffle?tier=${tier}`)
     if (!response.ok || !data.ok) return
     setRaffleEntries(data.entries || [])
-    setRaffleWinner(data.winner || null)
+    setRaffleWinners(data.winners || [])
     setRouletteIndex(0)
   }
 
@@ -577,7 +694,7 @@ export default function Admin() {
       }
       setRaffleEmail("")
       setRaffleEntries(data.raffle?.entries || [])
-      setRaffleWinner(data.raffle?.winner || null)
+      setRaffleWinners(data.raffle?.winners || [])
       setStatus(data.duplicated ? "Email déjà préinscrit sur ce palier" : "Préinscription ajoutée")
     } finally {
       setRaffleLoading(false)
@@ -598,7 +715,7 @@ export default function Admin() {
         return
       }
       setRaffleEntries(data.raffle?.entries || [])
-      setRaffleWinner(data.raffle?.winner || null)
+      setRaffleWinners(data.raffle?.winners || [])
       setStatus(`${data.added || 0} faux préinscrits ajoutés`)
     } finally {
       setRaffleLoading(false)
@@ -646,11 +763,12 @@ export default function Admin() {
 
       const entries = data.raffle?.entries || []
       setRaffleEntries(entries)
-      if (data.winner) {
-        await animateRoulette(entries, data.winner.id)
+      if (data.winners?.length) {
+        const featuredWinner = data.winners[data.winners.length - 1]
+        await animateRoulette(entries, featuredWinner.id)
       }
-      setRaffleWinner(data.raffle?.winner || data.winner || null)
-      setStatus("Tirage terminé")
+      setRaffleWinners(data.raffle?.winners || data.winners || [])
+      setStatus(`Tirage terminé: ${data.raffle?.winnersCount || data.winners?.length || 0} gagnant(s)`)
     } finally {
       setRaffleLoading(false)
     }
@@ -697,6 +815,9 @@ export default function Admin() {
             <button className="btn danger" onClick={resetRound} disabled={loading}>
               Réinitialiser la manche
             </button>
+            <button className="btn danger" onClick={resetAll} disabled={loading}>
+              Réinitialisation complète
+            </button>
             <button
               className={`btn ${debug?.gameEnded ? "ghost" : "danger"}`}
               onClick={() => toggleGameEnded(!debug?.gameEnded)}
@@ -730,7 +851,13 @@ export default function Admin() {
               {debug?.tierLocked ? " (gagnant trouvé, passe au palier suivant)" : ""}
             </p>
           ) : null}
-          {debug?.gameEnded ? <p className="status">Le jeu est actuellement termine pour tous les joueurs.</p> : null}
+          {debug?.targetTier ? (
+            <div className="current-reward-banner admin-reward-banner">
+              <span>Lot en jeu</span>
+              <strong>{(tierRewards[`reward.line_${debug.targetTier}`] || "").trim() || "Aucun lot saisi pour cette manche"}</strong>
+            </div>
+          ) : null}
+          {debug?.gameEnded ? <p className="status">Le jeu est actuellement terminé pour tous les joueurs.</p> : null}
           {debug?.gameFallbackActive ? <p className="status">Le fallback technique est actuellement affiche a tous les joueurs.</p> : null}
           <div className="row">
             <input
@@ -821,9 +948,45 @@ export default function Admin() {
                   )
                 })}
               </div>
+              <h2 style={{ marginTop: 18 }}>Gagnants par manche</h2>
+              <div className="content-editor-list">
+                {Array.from({ length: Number(debug.rows) }, (_, index) => {
+                  const tier = index + 1
+                  const key = `line_${tier}`
+                  const label = tier === Number(debug.rows) ? "Carton plein" : `${tier} ligne${tier > 1 ? "s" : ""}`
+                  const winnersCount = Number(debug?.raffle?.byTier?.[key]?.winnersCount || 0)
+                  const quota = Number(raffleQuotas[key] || debug?.raffle?.byTier?.[key]?.quota || 1)
+                  return (
+                    <label key={key} className="content-editor-item quota-editor-item">
+                      <span className="content-editor-key">{label}</span>
+                      <div className="quota-editor-row">
+                        <input
+                          className="input quota-editor-input"
+                          type="number"
+                          min="1"
+                          max="50"
+                          value={quota}
+                          onChange={(e) =>
+                            setRaffleQuotas((prev) => ({
+                              ...prev,
+                              [key]: e.target.value
+                            }))
+                          }
+                        />
+                        <small className="hint">
+                          Tirés: {winnersCount} / {Number(debug?.raffle?.byTier?.[key]?.quota || quota || 1)}
+                        </small>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
               <div className="row">
                 <button className="btn ghost" onClick={saveTierRewards} disabled={loading}>
                   Enregistrer les gains
+                </button>
+                <button className="btn ghost" onClick={saveRaffleQuotas} disabled={loading}>
+                  Enregistrer les gagnants
                 </button>
               </div>
             </div>
@@ -832,10 +995,25 @@ export default function Admin() {
             <>
               <div className="kpis">
                 <div><strong>{debug.events}</strong><span>événements</span></div>
-                <div><strong>{debug.players}</strong><span>joueurs</span></div>
+                <div><strong>{debug.players}</strong><span>cartes attribuées</span></div>
+                <div><strong>{debug.connectedPlayers || 0}</strong><span>joueurs connectés</span></div>
                 <div><strong>{debug.triggered}</strong><span>tirés</span></div>
                 <div><strong>{debug.activationCount || 0}</strong><span>activations</span></div>
                 <div><strong>{debug.rows}x{debug.cols}</strong><span>grille</span></div>
+                <div><strong>{formatDateTime(debug.ulule?.lastSyncAt)}</strong><span>dernière synchro Ulule</span></div>
+              </div>
+              <div className="round-timeline">
+                {roundTimeline.map((item) => (
+                  <div key={item.tier} className={`round-timeline-item ${item.state}`}>
+                    <div className="round-timeline-head">
+                      <strong>{item.label}</strong>
+                      <span className={`round-badge ${item.state}`}>
+                        {item.state === "drawn" ? "Tiré" : item.state === "active" ? "En jeu" : "À venir"}
+                      </span>
+                    </div>
+                    {item.winnersCount > 0 ? <small>{item.winnersCount} / {item.quota} gagnants tirés</small> : item.state === "active" ? <small>Manche en cours</small> : <small>Pas encore lancé</small>}
+                  </div>
+                ))}
               </div>
               <div className="winner-grid">
                 {winnerTiers.map((tier) => (
@@ -856,6 +1034,21 @@ export default function Admin() {
                   </div>
                 ))}
               </div>
+              <div className="panel" style={{ marginTop: 14, marginBottom: 0 }}>
+                <h2>Journal opérateur</h2>
+                <div className="admin-log-list">
+                  {(debug.adminLogs || []).length === 0 ? (
+                    <p className="hint">Aucune action opérateur récente.</p>
+                  ) : (
+                    (debug.adminLogs || []).slice().reverse().map((item) => (
+                      <div key={item.id} className="admin-log-item">
+                        <strong>{item.action}</strong>
+                        <span>{formatDateTime(item.createdAt)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </>
           )}
         </section>
@@ -865,6 +1058,10 @@ export default function Admin() {
       <section className="panel">
         <h2>Tirage au sort</h2>
         <p className="hint">Palier actif: <strong>{debug?.targetLabel || "1 ligne"}</strong></p>
+        <p className="hint">
+          Gagnants prévus: <strong>{debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.quota || 1}</strong>
+          {" "}• déjà tirés: <strong>{debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.winnersCount || 0}</strong>
+        </p>
         <div className="row">
           <input
             className="input"
@@ -882,8 +1079,12 @@ export default function Admin() {
           <button className="btn ghost" onClick={addMockEntries} disabled={raffleLoading}>
             Ajouter 25 démos
           </button>
-          <button className="btn" onClick={drawRaffle} disabled={raffleLoading || raffleEntries.length === 0}>
-            Lancer le tirage
+          <button
+            className="btn"
+            onClick={drawRaffle}
+            disabled={raffleLoading || raffleEntries.length === 0 || Number(debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.winnersCount || 0) > 0}
+          >
+            {Number(debug?.raffle?.byTier?.[`line_${debug?.targetTier || 1}`]?.winnersCount || 0) > 0 ? "Tirage déjà effectué" : "Lancer le tirage"}
           </button>
         </div>
 
@@ -894,7 +1095,7 @@ export default function Admin() {
             raffleEntries.slice(0, 80).map((entry, index) => (
               <div
                 key={entry.id}
-                className={`raffle-item ${index === rouletteIndex ? "active" : ""} ${raffleWinner?.id === entry.id ? "winner" : ""}`}
+                className={`raffle-item ${index === rouletteIndex ? "active" : ""} ${raffleWinners.some((winner) => winner.id === entry.id) ? "winner" : ""}`}
               >
                 <strong>{formatParticipant(entry)}</strong>
                 {entry.ulule ? (
@@ -908,8 +1109,11 @@ export default function Admin() {
         </div>
 
         <p className="hint">Préinscrits: <strong>{raffleEntries.length}</strong></p>
-        {raffleWinner ? (
-          <p className="status">Gagnant tiré au sort: <strong>{formatParticipant(raffleWinner)}</strong></p>
+        {raffleWinners.length > 0 ? (
+          <div className="status">
+            <strong>Gagnants tirés au sort:</strong>{" "}
+            {raffleWinners.map((winner) => formatParticipant(winner)).join(" • ")}
+          </div>
         ) : null}
       </section>
 

@@ -54,9 +54,10 @@ let winners = Array.from({ length: ROWS }, () => new Set())
 let rewardedTokens = new Set()
 let currentTargetTier = 1
 let raffleEntriesByTier = Array.from({ length: ROWS }, () => new Map())
-let raffleWinnerByTier = Array.from({ length: ROWS }, () => null)
+let raffleWinnerByTier = Array.from({ length: ROWS }, () => [])
 let raffleWonEmails = new Set()
 let raffleEntrySeq = 1
+let raffleQuotaByTier = Array.from({ length: ROWS }, (_, index) => defaultRaffleQuota(index + 1, ROWS))
 let activationSequence = 0
 let activationLog = []
 let activationCountByEvent = new Map()
@@ -100,16 +101,19 @@ let gameFallbackActive = false
 let runtimeStateStorageReady = false
 let pendingRuntimeState = null
 let runtimeStateSaveTimer = null
+let uiSettingsStorageReady = false
+const MAX_ADMIN_LOG = Number(process.env.MAX_ADMIN_LOG || 300)
+let adminActionLog = []
 const DEFAULT_TEXT_CONTENT = {
   "brand.logo_src": "",
   "player.title": "Bingo Live",
   "player.subtitle": "Campagne en direct",
   "player.loading_card": "Chargement de la carte...",
-  "player.game_ended_title": "Jeu termine",
+  "player.game_ended_title": "Jeu terminé",
   "player.game_ended_body": "Merci a tous pour votre participation.",
   "player.fallback_title": "Jeu indisponible",
-  "player.fallback_body": "En raison de problemes techniques, nous ne sommes malheureusement pas en mesure de pouvoir vous proposer ce jeu. Nous vous remercions toutefois pour votre participation. A tres vite.",
-  "player.no_cards_generated": "Initialisation du bingo en cours, reessaie dans quelques secondes.",
+  "player.fallback_body": "En raison de problèmes techniques, nous ne sommes malheureusement pas en mesure de pouvoir vous proposer ce jeu. Nous vous remercions toutefois pour votre participation. À très vite.",
+  "player.no_cards_generated": "Initialisation du bingo en cours, réessaie dans quelques secondes.",
   "player.connection_error": "Connexion indisponible temporairement.",
   "player.countdown_label": "Fin de campagne dans",
   "player.countdown_ended": "Campagne terminée",
@@ -131,27 +135,27 @@ const DEFAULT_TEXT_CONTENT = {
   "player.raffle_button": "Participer au tirage au sort",
   "player.raffle_registered_banner": "Ta participation au tirage au sort est bien prise en compte.",
   "player.raffle_registered_status": "Tu participes au tirage au sort.",
-  "player.current_reward_label": "A gagner",
+  "player.current_reward_label": "À gagner",
   "player.cell_validated_badge": "Validé",
-  "player.progress_ready": "Eligible au tirage",
-  "player.progress_closed": "Tirage termine",
+  "player.progress_ready": "Éligible au tirage",
+  "player.progress_closed": "Tirage terminé",
   "player.progress_waiting_round": "En attente de cette manche",
   "player.progress_missing": "Il manque {missing} case{plural}",
-  "player.qualified_banner": "Tu as complete {label}. Tu peux participer au tirage au sort.",
+  "player.qualified_banner": "Tu as complété {label}. Tu peux participer au tirage au sort.",
   "player.modal_title": "Participer au tirage",
-  "player.modal_body": "Tu es qualifie pour {label}. Renseigne le prenom et l'adresse email utilisee pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit etre d'au moins 10 EUR.",
-  "player.modal_first_name": "Prenom",
+  "player.modal_body": "Tu es qualifié pour {label}. Renseigne le prénom et l'adresse e-mail utilisée pour ta contribution Ulule. Pour participer, cette contribution ou ce don doit être d'au moins 10 EUR.",
+  "player.modal_first_name": "Prénom",
   "player.modal_email": "Email utilise sur Ulule",
   "player.modal_close": "Fermer",
   "player.modal_submit": "Valider ma participation",
-  "player.modal_submit_loading": "Verification...",
-  "player.error_missing_fields": "Merci de remplir ton prenom et l'email utilise pour ta contribution Ulule.",
-  "player.error_not_ulule_eligible": "Aucune contribution eligible n'a ete trouvee pour cet email sur Ulule. Verifie que l'email est correct, ou contribue avec cet email avec une contrepartie ou un don d'au moins 10 EUR.",
-  "player.error_contribution_too_low": "Une contribution existe bien pour cet email sur Ulule, mais son montant est inferieur a 10 EUR. Pour participer au tirage, la contribution ou le don doit etre d'au moins 10 EUR.",
+  "player.modal_submit_loading": "Vérification...",
+  "player.error_missing_fields": "Merci de remplir ton prénom et l'e-mail utilisé pour ta contribution Ulule.",
+  "player.error_not_ulule_eligible": "Aucune contribution éligible n'a été trouvée pour cet e-mail sur Ulule. Vérifie que l'e-mail est correct, ou contribue avec cet e-mail avec une contrepartie ou un don d'au moins 10 EUR.",
+  "player.error_contribution_too_low": "Une contribution existe bien pour cet e-mail sur Ulule, mais son montant est inférieur à 10 EUR. Pour participer au tirage, la contribution ou le don doit être d'au moins 10 EUR.",
   "player.error_not_qualified": "Ta qualification n'est plus active pour ce palier.",
   "player.error_generic": "Erreur : {error}",
-  "player.success_duplicate": "Email deja inscrit pour ce palier.",
-  "player.success_validated": "Inscription au tirage validee.",
+  "player.success_duplicate": "E-mail déjà inscrit pour ce palier.",
+  "player.success_validated": "Inscription au tirage validée.",
   "overlay.title": "Progression Bingo Live",
   "overlay.events": "Evenements : {current}/{total}",
   "overlay.players": "Joueurs : {count}",
@@ -170,9 +174,23 @@ const DEFAULT_TEXT_CONTENT = {
 }
 let editableContent = { ...DEFAULT_TEXT_CONTENT }
 let contentStorageReady = false
+const DEFAULT_UI_SETTINGS = {
+  playerDensityMode: "lisible",
+  playerFullscreenMode: false
+}
+let uiSettings = { ...DEFAULT_UI_SETTINGS }
 
 function boardSize() {
   return ROWS * COLS
+}
+
+function defaultRaffleQuota(tier, rows) {
+  if (tier === rows) return 1
+  if (rows >= 5 && tier === rows - 1) return 2
+  if (tier === 1) return 10
+  if (tier === 2) return 5
+  if (tier === 3) return 3
+  return 1
 }
 
 function createWinnerTiers() {
@@ -182,7 +200,7 @@ function createWinnerTiers() {
 function createRaffleStore() {
   return {
     entriesByTier: Array.from({ length: ROWS }, () => new Map()),
-    winnerByTier: Array.from({ length: ROWS }, () => null)
+    winnerByTier: Array.from({ length: ROWS }, () => [])
   }
 }
 
@@ -387,6 +405,18 @@ function serializeContent() {
   return { ...DEFAULT_TEXT_CONTENT, ...editableContent }
 }
 
+function normalizeDensityMode(value) {
+  if (value === "compact" || value === "lisible" || value === "geant") return value
+  return DEFAULT_UI_SETTINGS.playerDensityMode
+}
+
+function serializeUiSettings() {
+  return {
+    playerDensityMode: normalizeDensityMode(uiSettings.playerDensityMode),
+    playerFullscreenMode: Boolean(uiSettings.playerFullscreenMode)
+  }
+}
+
 function serializeBranding() {
   const content = serializeContent()
   return {
@@ -443,6 +473,87 @@ async function saveEditableContent(entries) {
   return { ok: true, persisted: true }
 }
 
+async function loadUiSettings() {
+  const { data, error } = await supabase.from("app_ui_settings").select("setting_key, setting_value")
+  if (error) {
+    fastify.log.warn({ error }, "UI settings table unavailable, using defaults")
+    uiSettings = { ...DEFAULT_UI_SETTINGS }
+    uiSettingsStorageReady = false
+    return false
+  }
+
+  const next = { ...DEFAULT_UI_SETTINGS }
+  for (const row of data || []) {
+    if (row?.setting_key === "playerDensityMode") {
+      next.playerDensityMode = normalizeDensityMode(row.setting_value)
+    }
+    if (row?.setting_key === "playerFullscreenMode") {
+      next.playerFullscreenMode = Boolean(row.setting_value)
+    }
+  }
+  uiSettings = next
+  uiSettingsStorageReady = true
+  return true
+}
+
+async function saveUiSettings(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { ok: true, persisted: uiSettingsStorageReady, settings: serializeUiSettings() }
+  }
+
+  const next = { ...serializeUiSettings() }
+  const rows = []
+  for (const entry of entries) {
+    if (!entry || typeof entry.key !== "string") continue
+    if (entry.key === "playerDensityMode") {
+      next.playerDensityMode = normalizeDensityMode(entry.value)
+      rows.push({ setting_key: "playerDensityMode", setting_value: next.playerDensityMode })
+    }
+    if (entry.key === "playerFullscreenMode") {
+      next.playerFullscreenMode = Boolean(entry.value)
+      rows.push({ setting_key: "playerFullscreenMode", setting_value: next.playerFullscreenMode })
+    }
+  }
+
+  uiSettings = next
+  if (rows.length === 0) {
+    return { ok: true, persisted: uiSettingsStorageReady, settings: serializeUiSettings() }
+  }
+
+  const { error } = await supabase.from("app_ui_settings").upsert(rows, { onConflict: "setting_key" })
+  if (error) {
+    fastify.log.warn({ error }, "UI settings save fallback to memory only")
+    uiSettingsStorageReady = false
+    return { ok: true, persisted: false, warning: "storage_unavailable", settings: serializeUiSettings() }
+  }
+
+  uiSettingsStorageReady = true
+  return { ok: true, persisted: true, settings: serializeUiSettings() }
+}
+
+function getConnectedPlayerCount() {
+  let count = 0
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data?.token) count += 1
+  }
+  return count
+}
+
+function pushAdminLog(action, details = {}) {
+  adminActionLog.push({
+    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    action,
+    details,
+    createdAt: new Date().toISOString()
+  })
+  if (adminActionLog.length > MAX_ADMIN_LOG) {
+    adminActionLog = adminActionLog.slice(adminActionLog.length - MAX_ADMIN_LOG)
+  }
+  if (cards.length > 0) {
+    scheduleRuntimeStateSave(50)
+  }
+}
+
 function serializeRuntimeState() {
   return {
     rows: ROWS,
@@ -463,8 +574,10 @@ function serializeRuntimeState() {
     triggered,
     activationSequence,
     activationLog,
+    adminActionLog,
     activationCountByEvent: Object.fromEntries(activationCountByEvent.entries()),
     raffleEntrySeq,
+    raffleQuotaByTier,
     raffleWonEmails: [...raffleWonEmails],
     raffleEntriesByTier: raffleEntriesByTier.map((entriesMap) => [...entriesMap.values()]),
     raffleWinnerByTier
@@ -636,6 +749,11 @@ function applyPendingRuntimeState() {
         .filter((item) => item && typeof item.event === "string" && triggeredSet.has(item.event))
         .slice(-MAX_ACTIVATION_LOG)
     : []
+  adminActionLog = Array.isArray(stateValue.adminActionLog)
+    ? stateValue.adminActionLog
+        .filter((item) => item && typeof item.action === "string")
+        .slice(-MAX_ADMIN_LOG)
+    : []
 
   const rawCounts = stateValue.activationCountByEvent && typeof stateValue.activationCountByEvent === "object"
     ? stateValue.activationCountByEvent
@@ -663,13 +781,18 @@ function applyPendingRuntimeState() {
 
   raffleEntriesByTier = normalizeRaffleEntries(stateValue.raffleEntriesByTier)
   raffleWinnerByTier = Array.from({ length: ROWS }, (_, index) => {
-    const row = Array.isArray(stateValue.raffleWinnerByTier) ? stateValue.raffleWinnerByTier[index] : null
-    if (!row || typeof row.id !== "string" || typeof row.email !== "string") return null
-    return {
-      id: row.id,
-      email: normalizeRaffleEmail(row.email),
-      selectedAt: typeof row.selectedAt === "string" ? row.selectedAt : new Date().toISOString()
-    }
+    const rows = Array.isArray(stateValue.raffleWinnerByTier?.[index]) ? stateValue.raffleWinnerByTier[index] : []
+    return rows
+      .filter((row) => row && typeof row.id === "string" && typeof row.email === "string")
+      .map((row) => ({
+        id: row.id,
+        email: normalizeRaffleEmail(row.email),
+        playerToken: typeof row.playerToken === "string" ? row.playerToken.slice(0, 120) : "",
+        firstName: normalizeFirstName(row.firstName),
+        lastInitial: normalizeLastInitial(row.lastInitial),
+        ulule: row.ulule && typeof row.ulule === "object" ? row.ulule : null,
+        selectedAt: typeof row.selectedAt === "string" ? row.selectedAt : new Date().toISOString()
+      }))
   })
   raffleWonEmails = new Set(
     Array.isArray(stateValue.raffleWonEmails)
@@ -677,6 +800,10 @@ function applyPendingRuntimeState() {
       : []
   )
   raffleEntrySeq = Number.isInteger(Number(stateValue.raffleEntrySeq)) ? Math.max(1, Number(stateValue.raffleEntrySeq)) : 1
+  raffleQuotaByTier = Array.from({ length: ROWS }, (_, index) => {
+    const raw = Array.isArray(stateValue.raffleQuotaByTier) ? Number(stateValue.raffleQuotaByTier[index]) : NaN
+    return Number.isInteger(raw) && raw >= 1 ? raw : defaultRaffleQuota(index + 1, ROWS)
+  })
 }
 
 function restoreRuntimeProgress() {
@@ -731,14 +858,17 @@ function resetGameState() {
   raffleWinnerByTier = raffleStore.winnerByTier
   raffleWonEmails = new Set()
   raffleEntrySeq = 1
+  raffleQuotaByTier = Array.from({ length: ROWS }, (_, index) => defaultRaffleQuota(index + 1, ROWS))
   activationSequence = 0
   activationLog = []
+  adminActionLog = []
   activationCountByEvent = new Map()
   markProgressStatsDirty()
   gameVersion += 1
 }
 
 function clearRoundProgress() {
+  const previousQuotas = [...raffleQuotaByTier]
   triggered = []
   triggeredSet = new Set()
   winners = createWinnerTiers()
@@ -749,10 +879,33 @@ function clearRoundProgress() {
   raffleWinnerByTier = raffleStore.winnerByTier
   raffleWonEmails = new Set()
   raffleEntrySeq = 1
+  raffleQuotaByTier = Array.from({ length: ROWS }, (_, index) => {
+    const value = Number(previousQuotas[index])
+    return Number.isInteger(value) && value >= 1 ? value : defaultRaffleQuota(index + 1, ROWS)
+  })
   activationSequence = 0
   activationLog = []
+  adminActionLog = []
   activationCountByEvent = new Map()
   markProgressStatsDirty()
+}
+
+function resetLiveRuntime({ preserveQuotas = true, regenerateCards = true } = {}) {
+  const previousQuotas = preserveQuotas ? [...raffleQuotaByTier] : null
+  resetGameState()
+  if (previousQuotas && previousQuotas.length === ROWS) {
+    raffleQuotaByTier = Array.from({ length: ROWS }, (_, index) => {
+      const value = Number(previousQuotas[index])
+      return Number.isInteger(value) && value >= 1 ? value : defaultRaffleQuota(index + 1, ROWS)
+    })
+  }
+  gameEnded = false
+  gameFallbackActive = false
+  if (regenerateCards) {
+    const generated = generateCards()
+    if (!generated) return false
+  }
+  return true
 }
 
 function generateCards() {
@@ -985,12 +1138,14 @@ async function bootstrapGameData() {
 
   bootstrapPromise = (async () => {
     await loadRuntimeState()
+    await loadUiSettings()
     const ok = await loadEvents()
     isBootstrapped = Boolean(ok && cards.length > 0)
     bootstrapError = isBootstrapped ? null : "bootstrap_failed"
     if (isBootstrapped) {
       restoreRuntimeProgress()
       refreshConnectedPlayers()
+      io.emit("ui-settings", serializeUiSettings())
       io.emit("state", serializeState())
     }
     return ok
@@ -1013,6 +1168,7 @@ io.on("connection", (socket) => {
     }
 
     socket.emit("content", serializeContent())
+    socket.emit("ui-settings", serializeUiSettings())
     socket.emit("state", serializeState())
     return
   }
@@ -1029,6 +1185,7 @@ io.on("connection", (socket) => {
   const player = ensurePlayer(token)
 
   socket.emit("content", serializeContent())
+  socket.emit("ui-settings", serializeUiSettings())
   socket.emit("token", token)
   socket.emit("card", cards[player.cardIndex])
   socket.emit("player-meta", serializePlayerMeta(token))
@@ -1074,11 +1231,13 @@ function getDebugState() {
     gameEnded,
     gameFallbackActive,
     runtimeStateStorageReady,
+    uiSettingsStorageReady,
     ...serializeBoardConfig(),
     events: eventNames.length,
     mandatory,
     cards: cards.length,
     players: players.size,
+    connectedPlayers: getConnectedPlayerCount(),
     triggered: triggered.length,
     activationCount: activationSequence,
     targetTier: currentTargetTier,
@@ -1090,7 +1249,8 @@ function getDebugState() {
     ulule: getUluleStatus(),
     raffle: serializeRaffleSummary(),
     progressByLine: getProgressStatsByLine(),
-    winners: serializeWinnerCounts()
+    winners: serializeWinnerCounts(),
+    adminLogs: adminActionLog.slice(-40)
   }
 }
 
@@ -1543,15 +1703,18 @@ function serializeRaffleTier(tier) {
     source: entry.source,
     createdAt: entry.createdAt
   }))
-  const winnerBase = raffleWinnerByTier[tierIndex]
-  const winnerEntry = winnerBase?.id ? entries.find((entry) => entry.id === winnerBase.id) : null
-  const winner = winnerEntry ? { ...winnerEntry, selectedAt: winnerBase.selectedAt } : winnerBase
+  const winners = Array.isArray(raffleWinnerByTier[tierIndex]) ? raffleWinnerByTier[tierIndex] : []
+  const quota = Number(raffleQuotaByTier[tierIndex] || defaultRaffleQuota(tier, ROWS))
   return {
     tier,
     label: tier === ROWS ? `Carton plein (${tier} lignes)` : `${tier} ligne${tier > 1 ? "s" : ""}`,
+    quota,
+    winnersCount: winners.length,
+    remainingToDraw: Math.max(0, quota - winners.length),
     entriesCount: entries.length,
     entries,
-    winner
+    winners,
+    winner: winners[winners.length - 1] || null
   }
 }
 
@@ -1560,7 +1723,10 @@ function serializeRaffleSummary() {
   for (let tier = 1; tier <= ROWS; tier++) {
     const tierData = serializeRaffleTier(tier)
     byTier[`line_${tier}`] = {
+      quota: tierData.quota,
       entriesCount: tierData.entriesCount,
+      winnersCount: tierData.winnersCount,
+      winners: tierData.winners,
       winner: tierData.winner
     }
   }
@@ -1588,8 +1754,25 @@ function getEnteredTiersForPlayerToken(playerToken) {
 
 function serializePlayerMeta(playerToken) {
   return {
-    raffleEnteredTiers: getEnteredTiersForPlayerToken(playerToken)
+    raffleEnteredTiers: getEnteredTiersForPlayerToken(playerToken),
+    hasWonAnyRaffle: Array.isArray(raffleWinnerByTier)
+      ? raffleWinnerByTier.some((tierWinners) => Array.isArray(tierWinners) && tierWinners.some((winner) => winner.playerToken === playerToken))
+      : false
   }
+}
+
+function getPlayerCompletedLines(playerToken) {
+  if (typeof playerToken !== "string" || !playerToken) return 0
+  const player = players.get(playerToken)
+  if (!player) return 0
+  const cardIndex = Number(player.cardIndex)
+  if (!Number.isInteger(cardIndex) || cardIndex < 0 || cardIndex >= cardLineCounts.length) return 0
+  return Number(cardLineCounts[cardIndex] || 0)
+}
+
+function isPlayerQualifiedForTier(playerToken, tier) {
+  if (!Number.isInteger(Number(tier)) || tier < 1 || tier > ROWS) return false
+  return getPlayerCompletedLines(playerToken) >= tier
 }
 
 function normalizeFirstName(value) {
@@ -1602,6 +1785,7 @@ function addRaffleEntry({ tier, email, source = "manual", ulule = null, firstNam
   const entriesMap = raffleEntriesByTier[tierIndex]
   const normalizedEmail = normalizeRaffleEmail(email)
   if (!normalizedEmail) return { ok: false, error: "invalid_email" }
+  if (raffleWonEmails.has(normalizedEmail)) return { ok: false, error: "already_won_bingo" }
 
   for (const existing of entriesMap.values()) {
     if (existing.email === normalizedEmail) {
@@ -1673,6 +1857,81 @@ function serializeAdminEvents() {
   }))
 }
 
+function buildBackupSnapshot() {
+  return {
+    exportedAt: new Date().toISOString(),
+    version: 1,
+    events: events.map((event) => ({
+      name: event.name,
+      category: event.category,
+      is_mandatory: Boolean(event.is_mandatory)
+    })),
+    content: serializeContent(),
+    uiSettings: serializeUiSettings(),
+    runtime: serializeRuntimeState()
+  }
+}
+
+async function replaceAllEvents(nextEvents) {
+  const normalizedRows = Array.isArray(nextEvents)
+    ? nextEvents
+        .map((event) => ({
+          name: typeof event?.name === "string" ? event.name.trim() : "",
+          category: normalizeCategory(event?.category),
+          is_mandatory: Boolean(event?.is_mandatory)
+        }))
+        .filter((event) => event.name)
+    : []
+
+  if (normalizedRows.length === 0) {
+    throw new Error("invalid_events_snapshot")
+  }
+
+  const { error: deleteError } = await supabase.from("events").delete().not("id", "is", null)
+  if (deleteError) throw deleteError
+
+  const { error: insertError } = await supabase.from("events").insert(normalizedRows)
+  if (insertError) throw insertError
+}
+
+async function applyBackupSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return { ok: false, error: "invalid_snapshot" }
+  }
+
+  if (!Array.isArray(snapshot.events) || !snapshot.content || !snapshot.runtime) {
+    return { ok: false, error: "invalid_snapshot" }
+  }
+
+  await replaceAllEvents(snapshot.events)
+
+  const contentEntries = Object.entries(snapshot.content || {}).map(([key, value]) => ({
+    key,
+    value: typeof value === "string" ? value : ""
+  }))
+  await saveEditableContent(contentEntries)
+
+  const nextUiEntries = Object.entries(snapshot.uiSettings || {}).map(([key, value]) => ({
+    key,
+    value
+  }))
+  await saveUiSettings(nextUiEntries)
+
+  pendingRuntimeState = snapshot.runtime
+  const ok = await loadEvents()
+  if (!ok) {
+    return { ok: false, error: "reload_failed_after_import" }
+  }
+  restoreRuntimeProgress()
+  refreshConnectedPlayers()
+  io.emit("content", serializeContent())
+  io.emit("ui-settings", serializeUiSettings())
+  io.emit("state", serializeState())
+  await saveRuntimeState()
+  pushAdminLog("import_snapshot", { events: events.length, players: players.size, triggered: triggered.length })
+  return { ok: true }
+}
+
 fastify.get("/api/backend-bruno/debug", { preHandler: requireAdmin }, async () => {
   return getDebugState()
 })
@@ -1682,6 +1941,14 @@ fastify.get("/api/backend-bruno/content", { preHandler: requireAdmin }, async ()
     ok: true,
     persisted: contentStorageReady,
     content: serializeContent()
+  }
+})
+
+fastify.get("/api/backend-bruno/ui-settings", { preHandler: requireAdmin }, async () => {
+  return {
+    ok: true,
+    persisted: uiSettingsStorageReady,
+    settings: serializeUiSettings()
   }
 })
 
@@ -1700,12 +1967,56 @@ fastify.patch("/api/backend-bruno/content", { preHandler: requireAdmin }, async 
   }
 
   const result = await saveEditableContent(entries)
+  pushAdminLog("save_content", { keys: entries.map((entry) => entry?.key).filter(Boolean).slice(0, 20) })
   io.emit("content", serializeContent())
   return {
     ok: true,
     persisted: Boolean(result.persisted),
     warning: result.warning || null,
     content: serializeContent()
+  }
+})
+
+fastify.patch("/api/backend-bruno/ui-settings", { preHandler: requireAdmin }, async (req, reply) => {
+  const entries = Array.isArray(req.body?.entries) ? req.body.entries : null
+  if (!entries) {
+    reply.code(400)
+    return { ok: false, error: "invalid_entries" }
+  }
+
+  const result = await saveUiSettings(entries)
+  pushAdminLog("save_ui_settings", { settings: serializeUiSettings() })
+  io.emit("ui-settings", serializeUiSettings())
+  return {
+    ok: true,
+    persisted: Boolean(result.persisted),
+    warning: result.warning || null,
+    settings: serializeUiSettings()
+  }
+})
+
+fastify.get("/api/backend-bruno/export", { preHandler: requireAdmin }, async () => {
+  return {
+    ok: true,
+    snapshot: buildBackupSnapshot()
+  }
+})
+
+fastify.post("/api/backend-bruno/import", { preHandler: requireAdmin }, async (req, reply) => {
+  try {
+    const result = await applyBackupSnapshot(req.body?.snapshot)
+    if (!result.ok) {
+      reply.code(400)
+      return result
+    }
+    return {
+      ok: true,
+      debug: getDebugState()
+    }
+  } catch (error) {
+    fastify.log.error({ error }, "Import snapshot failed")
+    reply.code(500)
+    return { ok: false, error: "import_failed" }
   }
 })
 
@@ -1731,6 +2042,7 @@ fastify.patch("/api/backend-bruno/campaign-end", { preHandler: requireAdmin }, a
 
   campaignEndAtMs = parsed
   await saveRuntimeState()
+  pushAdminLog("set_campaign_end", { endAt: new Date(campaignEndAtMs).toISOString() })
   io.emit("state", serializeState())
   return { ok: true, campaign: serializeCampaign() }
 })
@@ -1773,8 +2085,36 @@ fastify.patch("/api/backend-bruno/live-stream", { preHandler: requireAdmin }, as
   liveStreamUrl = normalized
   ululePageUrl = normalizedUlule
   await saveRuntimeState()
+  pushAdminLog("set_live_urls", { liveStreamUrl: Boolean(liveStreamUrl), ululePageUrl: Boolean(ululePageUrl) })
   io.emit("state", serializeState())
   return { ok: true, liveStream: serializeLiveStream() }
+})
+
+fastify.patch("/api/backend-bruno/raffle-quotas", { preHandler: requireAdmin }, async (req, reply) => {
+  const quotas = req.body?.quotas
+  if (!quotas || typeof quotas !== "object") {
+    reply.code(400)
+    return { ok: false, error: "invalid_quotas" }
+  }
+
+  const nextQuotas = Array.from({ length: ROWS }, (_, index) => {
+    const tier = index + 1
+    const value = Number(quotas[`line_${tier}`] ?? quotas[tier] ?? raffleQuotaByTier[index])
+    if (!Number.isInteger(value) || value < 1 || value > 50) {
+      return null
+    }
+    return value
+  })
+
+  if (nextQuotas.some((value) => value === null)) {
+    reply.code(400)
+    return { ok: false, error: "invalid_quotas" }
+  }
+
+  raffleQuotaByTier = nextQuotas
+  await saveRuntimeState()
+  pushAdminLog("update_raffle_quotas", { quotas: raffleQuotaByTier })
+  return { ok: true, quotas: raffleQuotaByTier, debug: getDebugState() }
 })
 
 fastify.get("/api/backend-bruno/ulule/status", { preHandler: requireAdmin }, async () => {
@@ -1910,6 +2250,7 @@ fastify.patch("/api/backend-bruno/board", { preHandler: requireAdmin }, async (r
     return { ok: false, error: "board_generation_failed" }
   }
   await saveRuntimeState()
+  pushAdminLog("update_board", { rows: ROWS, cols: COLS })
   refreshConnectedPlayers()
 
   return { ok: true, board: serializeBoardConfig(), gameVersion }
@@ -1935,6 +2276,7 @@ fastify.post("/api/backend-bruno/target-tier", { preHandler: requireAdmin }, asy
   recomputeWinners()
   evaluateCurrentTierAcrossCards()
   await saveRuntimeState()
+  pushAdminLog("change_tier", { tier })
   io.emit("state", serializeState())
   return { ok: true, debug: getDebugState() }
 })
@@ -1946,6 +2288,7 @@ fastify.post("/api/backend-bruno/game-ended", { preHandler: requireAdmin }, asyn
   }
   gameEnded = req.body.ended
   await saveRuntimeState()
+  pushAdminLog("toggle_game_ended", { ended: gameEnded })
   io.emit("state", serializeState())
   return { ok: true, debug: getDebugState(), state: serializeState() }
 })
@@ -1957,6 +2300,7 @@ fastify.post("/api/backend-bruno/game-fallback", { preHandler: requireAdmin }, a
   }
   gameFallbackActive = req.body.active
   await saveRuntimeState()
+  pushAdminLog("toggle_game_fallback", { active: gameFallbackActive })
   io.emit("state", serializeState())
   return { ok: true, debug: getDebugState(), state: serializeState() }
 })
@@ -2011,10 +2355,11 @@ fastify.post("/api/backend-bruno/raffle/enter", { preHandler: requireAdmin }, as
 
   if (!outcome.ok) {
     reply.code(400)
-    return outcome
+    return { ok: false, error: outcome.error || "enter_failed" }
   }
 
   await saveRuntimeState()
+  pushAdminLog("enter_raffle_admin", { tier, duplicated: Boolean(outcome.duplicated) })
   emitPlayerMetaForToken(req.body?.token)
   return {
     ok: true,
@@ -2040,8 +2385,7 @@ fastify.post("/api/raffle/enter", async (req, reply) => {
     return { ok: false, error: "missing_fields" }
   }
 
-  const tierWinners = winners[tier - 1]
-  if (!tierWinners || !tierWinners.has(playerToken)) {
+  if (!isPlayerQualifiedForTier(playerToken, tier)) {
     reply.code(403)
     return { ok: false, error: "not_qualified_for_tier" }
   }
@@ -2084,6 +2428,7 @@ fastify.post("/api/raffle/enter", async (req, reply) => {
   }
 
   await saveRuntimeState()
+  pushAdminLog("enter_raffle_player", { tier, duplicated: Boolean(outcome.duplicated) })
   emitPlayerMetaForToken(playerToken)
   return {
     ok: true,
@@ -2116,6 +2461,7 @@ fastify.post("/api/backend-bruno/raffle/mock", { preHandler: requireAdmin }, asy
   }
 
   await saveRuntimeState()
+  pushAdminLog("add_mock_entries", { tier, added })
   return {
     ok: true,
     added,
@@ -2136,22 +2482,45 @@ fastify.post("/api/backend-bruno/raffle/draw", { preHandler: requireAdmin }, asy
     return { ok: false, error: "no_entries" }
   }
 
-  if (raffleWinnerByTier[tierIndex]) {
+  if ((raffleWinnerByTier[tierIndex] || []).length > 0) {
     return { ok: true, alreadyDrawn: true, raffle: serializeRaffleTier(tier) }
   }
 
-  const selected = entries[Math.floor(Math.random() * entries.length)]
-  const winner = {
-    id: selected.id,
-    email: selected.email,
-    selectedAt: new Date().toISOString()
+  const eligibleEntries = entries.filter((entry) => !raffleWonEmails.has(entry.email))
+  if (eligibleEntries.length === 0) {
+    reply.code(400)
+    return { ok: false, error: "no_eligible_entries" }
   }
-  raffleWinnerByTier[tierIndex] = winner
+
+  const quota = Number(raffleQuotaByTier[tierIndex] || defaultRaffleQuota(tier, ROWS))
+  const winnersToDraw = Math.min(quota, eligibleEntries.length)
+  const pool = [...eligibleEntries]
+  const selectedWinners = []
+  while (selectedWinners.length < winnersToDraw && pool.length > 0) {
+    const pickedIndex = crypto.randomInt(0, pool.length)
+    const picked = pool.splice(pickedIndex, 1)[0]
+    const winner = {
+      id: picked.id,
+      email: picked.email,
+      playerToken: picked.playerToken || "",
+      firstName: picked.firstName || "",
+      lastInitial: picked.lastInitial || "",
+      ulule: picked.ulule || null,
+      selectedAt: new Date().toISOString()
+    }
+    selectedWinners.push(winner)
+    raffleWonEmails.add(picked.email)
+  }
+  raffleWinnerByTier[tierIndex] = selectedWinners
 
   await saveRuntimeState()
+  pushAdminLog("draw_raffle", { tier, winners: selectedWinners.length })
+  refreshConnectedPlayers()
+  io.emit("state", serializeState())
   return {
     ok: true,
-    winner,
+    winners: selectedWinners,
+    winner: selectedWinners[selectedWinners.length - 1] || null,
     raffle: serializeRaffleTier(tier)
   }
 })
@@ -2159,8 +2528,24 @@ fastify.post("/api/backend-bruno/raffle/draw", { preHandler: requireAdmin }, asy
 fastify.post("/api/backend-bruno/reset-round", { preHandler: requireAdmin }, async () => {
   clearRoundProgress()
   await saveRuntimeState()
+  pushAdminLog("reset_round")
+  refreshConnectedPlayers()
   io.emit("state", serializeState())
   return { ok: true }
+})
+
+fastify.post("/api/backend-bruno/reset-all", { preHandler: requireAdmin }, async (req, reply) => {
+  const ok = resetLiveRuntime({ preserveQuotas: true, regenerateCards: true })
+  if (!ok) {
+    reply.code(400)
+    return { ok: false, error: "reset_all_failed" }
+  }
+
+  await saveRuntimeState()
+  pushAdminLog("reset_all")
+  refreshConnectedPlayers()
+  io.emit("state", serializeState())
+  return { ok: true, debug: getDebugState(), state: serializeState() }
 })
 
 fastify.post("/api/backend-bruno/events", { preHandler: requireAdmin }, async (req, reply) => {
@@ -2199,6 +2584,7 @@ fastify.post("/api/backend-bruno/events", { preHandler: requireAdmin }, async (r
   }
 
   await saveRuntimeState()
+  pushAdminLog("create_event", { name: normalizedName, category, isMandatory })
   refreshConnectedPlayers()
   return { ok: true, gameReset: true }
 })
@@ -2243,6 +2629,7 @@ fastify.post("/api/backend-bruno/events/bulk", { preHandler: requireAdmin }, asy
   }
 
   await saveRuntimeState()
+  pushAdminLog("bulk_create_events", { inserted: rows.length, category, isMandatory })
   refreshConnectedPlayers()
   return {
     ok: true,
@@ -2323,12 +2710,14 @@ fastify.patch("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, asy
     }
 
     await saveRuntimeState()
+    pushAdminLog("update_event", { id, ...updates, gameReset: true })
     refreshConnectedPlayers()
     return { ok: true, gameReset: true }
   }
 
   // Category-only update: keep current round state and cards untouched.
   events = events.map((event) => (event.id === id ? { ...event, ...updates } : event))
+  pushAdminLog("update_event", { id, ...updates, gameReset: false })
   return { ok: true, gameReset: false }
 })
 
@@ -2359,6 +2748,7 @@ fastify.delete("/api/backend-bruno/events/:id", { preHandler: requireAdmin }, as
   }
 
   await saveRuntimeState()
+  pushAdminLog("delete_event", { id, name: eventRow.name })
   refreshConnectedPlayers()
   return { ok: true, gameReset: true }
 })
@@ -2383,6 +2773,7 @@ async function handleTrigger(req, reply) {
   }
 
   await saveRuntimeState()
+  pushAdminLog("trigger_event", { event: normalizedEvent })
   io.emit("state", serializeState())
   return { ok: true }
 }
@@ -2413,6 +2804,7 @@ fastify.post("/api/backend-bruno/events/:id/toggle", { preHandler: requireAdmin 
   }
 
   await saveRuntimeState()
+  pushAdminLog(req.body.active ? "activate_event" : "deactivate_event", { id, name: eventRow.name })
   io.emit("state", serializeState())
   return { ok: true, state: serializeState(), debug: getDebugState() }
 })
@@ -2435,6 +2827,7 @@ const start = async () => {
   try {
     const port = Number(process.env.PORT || 3000)
     await loadEditableContent()
+    await loadUiSettings()
     await fastify.listen({ port, host: "0.0.0.0" })
     fastify.log.info({ port }, "Server listening")
 

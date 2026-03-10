@@ -13,6 +13,24 @@ const MOBILE_APPEARANCE_FIELDS = [
   { key: "player.mobile_card_text_size", label: "Texte des cartes", hint: "Texte des cartes bingo mobile", min: 0.95, max: 4, step: 0.01 }
 ]
 
+const PLAYER_UI_FIELDS = [
+  {
+    key: "playerDensityMode",
+    label: "Densité joueur",
+    type: "select",
+    options: [
+      { value: "compact", label: "Compact" },
+      { value: "lisible", label: "Lisible" },
+      { value: "geant", label: "Géant" }
+    ]
+  },
+  {
+    key: "playerFullscreenMode",
+    label: "Mode plein écran épuré",
+    type: "checkbox"
+  }
+]
+
 const CONTENT_SECTIONS = [
   { key: "brand", label: "Logo" },
   { key: "player", label: "Joueur" },
@@ -25,8 +43,11 @@ export default function AdminContent() {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
   const [persisted, setPersisted] = useState(true)
+  const [uiPersisted, setUiPersisted] = useState(true)
   const [isDraggingLogo, setIsDraggingLogo] = useState(false)
   const [mobileAppearance, setMobileAppearance] = useState({})
+  const [playerUiSettings, setPlayerUiSettings] = useState({ playerDensityMode: "lisible", playerFullscreenMode: false })
+  const [importPayload, setImportPayload] = useState("")
 
   const sections = useMemo(() => {
     const mobileAppearanceKeys = new Set(MOBILE_APPEARANCE_FIELDS.map((field) => field.key))
@@ -58,7 +79,10 @@ export default function AdminContent() {
     setLoading(true)
     setStatus("")
     try {
-      const { response, data } = await fetchJson("/api/backend-bruno/content")
+      const [{ response, data }, { response: uiResponse, data: uiData }] = await Promise.all([
+        fetchJson("/api/backend-bruno/content"),
+        fetchJson("/api/backend-bruno/ui-settings")
+      ])
       if (!response.ok) {
         if (response.status === 403) {
           navigate("/admin/login", { replace: true })
@@ -75,6 +99,10 @@ export default function AdminContent() {
         }, {})
       )
       setPersisted(Boolean(data.persisted))
+      if (uiResponse.ok && uiData.ok) {
+        setPlayerUiSettings(uiData.settings || { playerDensityMode: "lisible", playerFullscreenMode: false })
+        setUiPersisted(Boolean(uiData.persisted))
+      }
       setStatus("Contenus charges")
     } finally {
       setLoading(false)
@@ -176,6 +204,85 @@ export default function AdminContent() {
     }
   }
 
+  async function savePlayerUiSettings() {
+    setLoading(true)
+    setStatus("")
+    try {
+      const entries = PLAYER_UI_FIELDS.map((field) => ({
+        key: field.key,
+        value: playerUiSettings[field.key]
+      }))
+      const { response, data } = await fetchJson("/api/backend-bruno/ui-settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ entries })
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur réglages joueur: ${data.error || "unknown_error"}`)
+        return
+      }
+      setPlayerUiSettings(data.settings || { playerDensityMode: "lisible", playerFullscreenMode: false })
+      setUiPersisted(Boolean(data.persisted))
+      setStatus("Réglages joueur enregistrés")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function exportSnapshot() {
+    setLoading(true)
+    setStatus("")
+    try {
+      const { response, data } = await fetchJson("/api/backend-bruno/export")
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur export: ${data.error || "unknown_error"}`)
+        return
+      }
+      const blob = new Blob([JSON.stringify(data.snapshot, null, 2)], { type: "application/json" })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `bingo-live-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`
+      anchor.click()
+      URL.revokeObjectURL(url)
+      setStatus("Export JSON téléchargé")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function importSnapshot() {
+    if (!importPayload.trim()) {
+      setStatus("Colle un JSON de sauvegarde avant l'import")
+      return
+    }
+    setLoading(true)
+    setStatus("")
+    try {
+      let snapshot
+      try {
+        snapshot = JSON.parse(importPayload)
+      } catch {
+        setStatus("JSON d'import invalide")
+        return
+      }
+      const { response, data } = await fetchJson("/api/backend-bruno/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ snapshot })
+      })
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur import: ${data.error || "unknown_error"}`)
+        return
+      }
+      setImportPayload("")
+      await loadContent()
+      setStatus("Sauvegarde restaurée")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="admin-shell">
       <div className="admin-header">
@@ -197,11 +304,50 @@ export default function AdminContent() {
         </div>
       </div>
 
-      {!persisted ? (
+      {!persisted || !uiPersisted ? (
         <section className="panel">
-          <p className="status">Attention: la table Supabase des contenus n'est pas encore disponible. Les changements restent actifs, mais ne survivront pas a un redemarrage serveur.</p>
+          <p className="status">Attention: une table Supabase de configuration manque encore. Les changements restent actifs, mais ne survivront pas a un redemarrage serveur.</p>
         </section>
       ) : null}
+
+      <section className="panel">
+        <h2>Expérience joueur</h2>
+        <p className="hint">Réglages UI persistés séparément des textes. Le mode d’affichage s’applique directement à la vue joueur.</p>
+        <div className="content-editor-list">
+          {PLAYER_UI_FIELDS.map((field) => (
+            <label key={field.key} className="content-editor-item">
+              <span className="content-editor-key">{field.label}</span>
+              {field.type === "select" ? (
+                <select
+                  className="input"
+                  value={playerUiSettings[field.key] || "lisible"}
+                  onChange={(e) => setPlayerUiSettings((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                >
+                  {field.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <label className="row" style={{ justifyContent: "flex-start" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(playerUiSettings[field.key])}
+                    onChange={(e) => setPlayerUiSettings((prev) => ({ ...prev, [field.key]: e.target.checked }))}
+                  />
+                  <span>Activé</span>
+                </label>
+              )}
+            </label>
+          ))}
+        </div>
+        <div className="row">
+          <button className="btn ghost" onClick={savePlayerUiSettings} disabled={loading}>
+            Enregistrer expérience joueur
+          </button>
+        </div>
+      </section>
 
       <section className="panel">
         <h2>Apparence mobile</h2>
@@ -238,6 +384,28 @@ export default function AdminContent() {
         <div className="row">
           <button className="btn ghost" onClick={saveMobileAppearance} disabled={loading}>
             Enregistrer tailles mobile
+          </button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Sauvegarde secours</h2>
+        <p className="hint">Export complet du jeu en cours, puis import JSON de reprise en cas d’incident.</p>
+        <div className="row">
+          <button className="btn ghost" onClick={exportSnapshot} disabled={loading}>
+            Exporter le JSON complet
+          </button>
+        </div>
+        <textarea
+          className="input content-editor-textarea"
+          rows="8"
+          placeholder="Colle ici un JSON d'export pour restaurer l'état complet du bingo"
+          value={importPayload}
+          onChange={(e) => setImportPayload(e.target.value)}
+        />
+        <div className="row">
+          <button className="btn danger" onClick={importSnapshot} disabled={loading}>
+            Importer cette sauvegarde
           </button>
         </div>
       </section>

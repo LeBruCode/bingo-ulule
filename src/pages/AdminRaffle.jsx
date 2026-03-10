@@ -10,12 +10,13 @@ export default function AdminRaffle() {
   const [content, setContent] = useState({})
   const [tier, setTier] = useState(1)
   const [entries, setEntries] = useState([])
-  const [winner, setWinner] = useState(null)
+  const [winners, setWinners] = useState([])
   const [loading, setLoading] = useState(false)
   const [spinning, setSpinning] = useState(false)
   const [rafflePhase, setRafflePhase] = useState("idle")
   const [stageEntries, setStageEntries] = useState([])
   const [focusEntry, setFocusEntry] = useState(null)
+  const [countdownValue, setCountdownValue] = useState(null)
   const [status, setStatus] = useState("")
 
   function formatParticipant(entry) {
@@ -35,8 +36,8 @@ export default function AdminRaffle() {
   }
 
   const previewEntries = useMemo(() => {
-    if (entries.length <= 12) return entries
-    return entries.slice(0, 12)
+    if (entries.length <= 48) return entries
+    return entries.slice(0, 48)
   }, [entries])
 
   const finalists = useMemo(() => {
@@ -83,10 +84,12 @@ export default function AdminRaffle() {
     const { response, data } = await fetchJson(`/api/backend-bruno/raffle?tier=${nextTier}`)
     if (!response.ok || !data.ok) return
     const nextEntries = data.entries || []
-    const nextWinner = data.winner || null
+    const nextWinners = data.winners || []
+    const nextWinner = nextWinners[nextWinners.length - 1] || null
     setEntries(nextEntries)
-    setWinner(nextWinner)
+    setWinners(nextWinners)
     setRafflePhase(nextWinner ? "winner" : "idle")
+    setCountdownValue(null)
     if (nextWinner?.id) {
       const winnerEntry = nextEntries.find((entry) => entry.id === nextWinner.id) || nextWinner
       setStageEntries(winnerEntry ? [winnerEntry] : [])
@@ -144,7 +147,7 @@ export default function AdminRaffle() {
       setDebug(data.debug || null)
       setTier(nextTier)
       await loadRaffle(nextTier)
-      setStatus(`Palier actif: ${data.debug?.targetLabel || `${nextTier} ligne(s)`}`)
+      setStatus(`Palier actif : ${data.debug?.targetLabel || `${nextTier} ligne(s)`}`)
     } finally {
       setLoading(false)
     }
@@ -167,7 +170,7 @@ export default function AdminRaffle() {
     if (entriesList.length <= 1) return entriesList
     const winnerEntry = entriesList.find((entry) => entry.id === winnerId)
     const others = shuffleList(entriesList.filter((entry) => entry.id !== winnerId))
-    const limit = Math.min(entriesList.length, 24)
+    const limit = Math.min(entriesList.length, 40)
     const selected = winnerEntry ? [winnerEntry, ...others.slice(0, Math.max(0, limit - 1))] : others.slice(0, limit)
     return shuffleList(selected)
   }
@@ -177,7 +180,7 @@ export default function AdminRaffle() {
     const winnerId = winnerEntry.id
     let pool = buildStagePool(entriesList, winnerId)
     setSpinning(true)
-    setWinner(null)
+    setWinners([])
     setRafflePhase("elimination")
     setStageEntries(pool)
     setFocusEntry(null)
@@ -186,7 +189,7 @@ export default function AdminRaffle() {
       await sleep(1200)
       setFocusEntry(winnerEntry)
       setRafflePhase("winner")
-      setWinner(winnerEntry)
+      setWinners([winnerEntry])
       setSpinning(false)
       return
     }
@@ -194,8 +197,8 @@ export default function AdminRaffle() {
     const finalistTarget = Math.min(5, pool.length)
     const earlyEliminations = Math.max(0, pool.length - finalistTarget)
     const finalEliminations = Math.max(0, finalistTarget - 1)
-    const earlyDelay = earlyEliminations > 0 ? 14000 / earlyEliminations : 0
-    const finalDelay = finalEliminations > 0 ? 6000 / finalEliminations : 0
+    const earlyDelay = earlyEliminations > 0 ? 11000 / earlyEliminations : 0
+    const finalDelay = finalEliminations > 0 ? 4500 / finalEliminations : 0
 
     while (pool.length > finalistTarget) {
       const removable = pool.filter((entry) => entry.id !== winnerId)
@@ -222,13 +225,26 @@ export default function AdminRaffle() {
     setStageEntries(pool)
     setFocusEntry(winnerEntry)
     setRafflePhase("winner")
-    setWinner(winnerEntry)
+    setWinners([winnerEntry])
     setSpinning(false)
+  }
+
+  async function runCountdown() {
+    setRafflePhase("countdown")
+    for (const value of [3, 2, 1]) {
+      setCountdownValue(value)
+      await sleep(850)
+    }
+    setCountdownValue(null)
   }
 
   async function drawWinner() {
     if (entries.length === 0) {
       setStatus("Aucun candidat pour ce palier")
+      return
+    }
+    if (winners.length > 0) {
+      setStatus("Le tirage a déjà été effectué pour cette manche")
       return
     }
     setLoading(true)
@@ -245,11 +261,14 @@ export default function AdminRaffle() {
       }
       const nextEntries = data.raffle?.entries || entries
       setEntries(nextEntries)
-      if (data.winner?.id) {
-        const winnerEntry = nextEntries.find((entry) => entry.id === data.winner.id) || data.raffle?.winner || data.winner
+      if (data.winners?.length) {
+        const featuredWinner = data.winners[data.winners.length - 1]
+        const winnerEntry = nextEntries.find((entry) => entry.id === featuredWinner.id) || data.raffle?.winner || featuredWinner
+        await runCountdown()
         await animateDraw(nextEntries, winnerEntry)
       }
-      setStatus("Tirage terminé")
+      setWinners(data.raffle?.winners || data.winners || [])
+      setStatus(`Tirage terminé: ${data.raffle?.winnersCount || data.winners?.length || 0} gagnant(s)`)
     } finally {
       setLoading(false)
     }
@@ -258,14 +277,21 @@ export default function AdminRaffle() {
   const tierButtons = Array.from({ length: Number(debug?.rows || 0) }, (_, i) => {
     const n = i + 1
     const tierKey = `line_${n}`
-    const hasWinner = Boolean(debug?.raffle?.byTier?.[tierKey]?.winner)
+    const winnersCount = Number(debug?.raffle?.byTier?.[tierKey]?.winnersCount || 0)
     return {
       tier: n,
       label: n === Number(debug?.rows || 0) ? "Carton plein" : `${n} ligne${n > 1 ? "s" : ""}`,
-      hasWinner
+      hasWinner: winnersCount > 0,
+      winnersCount,
+      quota: Number(debug?.raffle?.byTier?.[tierKey]?.quota || 1)
     }
   })
   const currentReward = typeof content[`reward.line_${tier}`] === "string" ? content[`reward.line_${tier}`].trim() : ""
+  const featuredWinner = winners[winners.length - 1] || null
+  const displayEntries = spinning || rafflePhase === "finalists" || featuredWinner ? stageEntries : previewEntries
+  const gridClassName = `raffle-grid ${rafflePhase === "finalists" ? "finalists" : ""} ${featuredWinner ? "winner" : ""} ${displayEntries.length >= 28 ? "dense" : displayEntries.length >= 16 ? "wide" : "comfortable"}`
+  const activeTierAlreadyDrawn = Boolean(tierButtons.find((item) => item.tier === tier)?.hasWinner)
+  const activeTierQuota = Number(tierButtons.find((item) => item.tier === tier)?.quota || 1)
 
   return (
     <div className="raffle-shell">
@@ -275,7 +301,7 @@ export default function AdminRaffle() {
           <span className="raffle-kicker">Bingo Live</span>
           <h1>Tirage au sort</h1>
           <p>
-            Palier en jeu: <strong>{debug?.targetLabel || `${tier} ligne`}</strong>
+            Palier en jeu : <strong>{debug?.targetLabel || `${tier} ligne`}</strong>
           </p>
         </div>
         <div className="row raffle-admin-actions">
@@ -291,30 +317,36 @@ export default function AdminRaffle() {
       <section className="raffle-stage">
         <div className="raffle-orb raffle-orb-left" />
         <div className="raffle-orb raffle-orb-right" />
+        {countdownValue !== null ? <div className="raffle-countdown-overlay">{countdownValue}</div> : null}
         <div className="raffle-stage-head">
           <div className={`raffle-pulse ${spinning ? "on" : ""}`}>TIRAGE {spinning ? "• TOC TOC TOC •" : "PRÊT"}</div>
           <div className="raffle-counts">
             <span>Candidats: <strong>{entries.length}</strong></span>
+            <span>Gagnants à tirer: <strong>{activeTierQuota}</strong></span>
             <span>Événements tirés: <strong>{debug?.triggered || 0}</strong></span>
-            <span>Joueurs: <strong>{debug?.players || 0}</strong></span>
+            <span>Joueurs connectés: <strong>{debug?.connectedPlayers || 0}</strong></span>
           </div>
         </div>
 
         <div className="raffle-hero">
-          <div className={`raffle-hero-card ${spinning ? "spinning" : ""} ${winner ? "winner" : ""}`}>
+          <div className={`raffle-hero-card ${spinning ? "spinning" : ""} ${featuredWinner ? "winner" : ""}`}>
             <span className="raffle-hero-label">
-              {winner ? "Gagnant sélectionné" : rafflePhase === "finalists" ? "Les 5 derniers" : spinning ? "Élimination en cours" : "Tirage prêt"}
+              {featuredWinner ? "Gagnants sélectionnés" : rafflePhase === "countdown" ? "Lancement imminent" : rafflePhase === "finalists" ? "Les 5 derniers" : spinning ? "Élimination en cours" : "Tirage prêt"}
             </span>
             <strong>
-              {winner
-                ? formatParticipant(winner)
+              {featuredWinner
+                ? `${winners.length} gagnant${winners.length > 1 ? "s" : ""}`
+                : rafflePhase === "countdown"
+                  ? "3 • 2 • 1"
                 : focusEntry && (spinning || rafflePhase === "finalists")
                   ? formatParticipant(focusEntry)
                   : "Prêt pour le tirage"}
             </strong>
             <small>
-              {winner
-                ? `Palier remporté: ${debug?.targetLabel || `${tier} ligne`}`
+              {featuredWinner
+                ? `Palier tiré: ${debug?.targetLabel || `${tier} ligne`} • ${winners.length} / ${activeTierQuota}`
+                : rafflePhase === "countdown"
+                  ? "Le tirage démarre maintenant"
                 : rafflePhase === "finalists"
                   ? `Suspense final entre ${finalists.length} candidat${finalists.length > 1 ? "s" : ""}`
                   : spinning
@@ -324,17 +356,17 @@ export default function AdminRaffle() {
           </div>
         </div>
 
-        <div className={`raffle-grid ${rafflePhase === "finalists" ? "finalists" : ""} ${winner ? "winner" : ""}`}>
-          {(spinning || rafflePhase === "finalists" || winner ? stageEntries : previewEntries).length === 0 ? (
+        <div className={gridClassName}>
+          {displayEntries.length === 0 ? (
             <div className="raffle-slot-empty">Aucun candidat pour ce palier</div>
           ) : (
-            (spinning || rafflePhase === "finalists" || winner ? stageEntries : previewEntries).map((entry) => (
+            displayEntries.map((entry) => (
               <div
                 key={entry.id}
-                className={`raffle-grid-card ${focusEntry?.id === entry.id ? "focus" : ""} ${winner?.id === entry.id ? "winner" : ""} ${finalists.some((item) => item.id === entry.id) ? "finalist" : ""}`}
+                className={`raffle-grid-card ${focusEntry?.id === entry.id ? "focus" : ""} ${winners.some((winnerItem) => winnerItem.id === entry.id) ? "winner" : ""} ${finalists.some((item) => item.id === entry.id) ? "finalist" : ""}`}
               >
                 <span className="raffle-grid-chip">
-                  {winner?.id === entry.id ? "Gagnant" : finalists.some((item) => item.id === entry.id) && rafflePhase === "finalists" ? "Finaliste" : "En lice"}
+                  {winners.some((winnerItem) => winnerItem.id === entry.id) ? "Gagnant" : finalists.some((item) => item.id === entry.id) && rafflePhase === "finalists" ? "Finaliste" : "En lice"}
                 </span>
                 <strong>{formatParticipant(entry)}</strong>
               </div>
@@ -351,24 +383,29 @@ export default function AdminRaffle() {
                 onClick={() => changeTier(item.tier)}
                 disabled={loading || spinning}
               >
-                {item.label}
+                {item.label} • {item.winnersCount}/{item.quota}
               </button>
             ))}
           </div>
           <div className="row">
-            <button className="btn raffle-launch" onClick={drawWinner} disabled={loading || spinning || entries.length === 0}>
-              Lancer le tirage - {debug?.targetLabel || `${tier} ligne`}
+            <button className="btn raffle-launch" onClick={drawWinner} disabled={loading || spinning || entries.length === 0 || activeTierAlreadyDrawn}>
+              {activeTierAlreadyDrawn ? `Tirage déjà effectué - ${debug?.targetLabel || `${tier} ligne`}` : `Lancer le tirage - ${debug?.targetLabel || `${tier} ligne`}`}
             </button>
           </div>
         </div>
 
-        {winner ? (
+        {featuredWinner ? (
           <div className="raffle-winner-banner">
-            <span>Gagnant du palier</span>
-            <strong>{formatParticipant(winner)}</strong>
-            <p>
-              Bravo à {formatParticipant(winner)}, tu viens de remporter {currentReward || "le lot de cette manche"}.
-            </p>
+            <span>Résultat du tirage</span>
+            <strong>{winners.length} gagnant{winners.length > 1 ? "s" : ""}</strong>
+            <div className="raffle-winner-list">
+              {winners.map((winnerItem) => (
+                <div key={winnerItem.id} className="raffle-winner-list-item">
+                  {formatParticipant(winnerItem)}
+                </div>
+              ))}
+            </div>
+            <p>Bravo aux gagnants. Vous remportez : {currentReward || "le lot de cette manche"}.</p>
           </div>
         ) : null}
       </section>
