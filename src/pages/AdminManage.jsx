@@ -9,6 +9,7 @@ export default function AdminManage() {
   const navigate = useNavigate()
   const [logoSrc] = useBrandLogo()
   const [events, setEvents] = useState([])
+  const [draggedEventId, setDraggedEventId] = useState(null)
   const [newEventName, setNewEventName] = useState("")
   const [bulkEventNames, setBulkEventNames] = useState("")
   const [newEventCategory, setNewEventCategory] = useState("general")
@@ -228,6 +229,39 @@ export default function AdminManage() {
     }
   }
 
+  async function moveEventToCategory(eventId, category) {
+    const event = events.find((item) => item.id === eventId)
+    if (!event || event.category === category) return
+
+    setLoading(true)
+    setStatus("")
+
+    try {
+      const { response, data } = await fetchJson(`/api/backend-bruno/events/${eventId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ category })
+      })
+
+      if (!response.ok || !data.ok) {
+        setStatus(`Erreur deplacement: ${data.error || "unknown_error"}`)
+        return
+      }
+
+      setEvents((prev) =>
+        prev.map((item) => (
+          item.id === eventId
+            ? { ...item, category }
+            : item
+        ))
+      )
+      setStatus(`Événement déplacé vers ${category}`)
+    } finally {
+      setLoading(false)
+      setDraggedEventId(null)
+    }
+  }
+
   return (
     <div className="admin-shell">
       <div className="admin-header">
@@ -311,7 +345,16 @@ export default function AdminManage() {
         <h2>Événements par catégorie</h2>
         <div className="category-stack manage-category-stack">
           {categories.map((category) => (
-            <section key={category} className="category-section manage-category-section">
+            <section
+              key={category}
+              className="category-section manage-category-section"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault()
+                const eventId = Number(event.dataTransfer.getData("text/event-id") || draggedEventId)
+                if (eventId) moveEventToCategory(eventId, category)
+              }}
+            >
               <header className="category-section-head">
                 <h3>{category}</h3>
                 <span>{eventsByCategory[category]?.length || 0}</span>
@@ -319,7 +362,18 @@ export default function AdminManage() {
 
               <div className="manage-event-list">
                 {(eventsByCategory[category] || []).map((event) => (
-                  <article key={event.id} className="manage-event-card">
+                  <article
+                    key={event.id}
+                    className={`manage-event-card ${editingId === event.id ? "editing" : "draggable"}`}
+                    draggable={editingId !== event.id}
+                    onDragStart={(dragEvent) => {
+                      if (editingId === event.id) return
+                      setDraggedEventId(event.id)
+                      dragEvent.dataTransfer.effectAllowed = "move"
+                      dragEvent.dataTransfer.setData("text/event-id", String(event.id))
+                    }}
+                    onDragEnd={() => setDraggedEventId(null)}
+                  >
                     <div className="manage-event-top">
                       <span className={event.triggered ? "pill on" : "pill"}>{event.triggered ? "Actif" : "Inactif"}</span>
                       {event.is_mandatory ? <span className="pill mandatory">Obligatoire</span> : null}
