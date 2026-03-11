@@ -113,6 +113,7 @@ let milestoneWinnersPerWindow = 1
 let milestoneWinnersByWindow = new Map()
 let milestoneWonEmails = new Set()
 let milestoneSelectedWindowKey = "window_1"
+let milestoneShowWindowOnCards = true
 let collectiveChallenges = []
 let activeCollectiveChallenge = null
 let collectiveChallengeTimer = null
@@ -783,6 +784,7 @@ function serializeRuntimeState() {
     activationCountByEvent: Object.fromEntries(activationCountByEvent.entries()),
     milestoneWinnersPerWindow,
     milestoneSelectedWindowKey,
+    milestoneShowWindowOnCards,
     milestoneWonEmails: [...milestoneWonEmails],
     milestoneWinnersByWindow: [...milestoneWinnersByWindow.entries()],
     collectiveChallenges,
@@ -1047,6 +1049,9 @@ function applyPendingRuntimeState() {
   milestoneSelectedWindowKey = typeof stateValue.milestoneSelectedWindowKey === "string" && /^window_\d+$/.test(stateValue.milestoneSelectedWindowKey)
     ? stateValue.milestoneSelectedWindowKey
     : "window_1"
+  milestoneShowWindowOnCards = typeof stateValue.milestoneShowWindowOnCards === "boolean"
+    ? stateValue.milestoneShowWindowOnCards
+    : true
   collectiveChallenges = normalizeChallengeDefinitions(stateValue.collectiveChallenges)
   activeCollectiveChallenge = normalizeActiveCollectiveChallenge(stateValue.activeCollectiveChallenge)
   ululeFrozenBeforeMs = Number.isFinite(Number(stateValue.ululeFrozenBeforeMs)) ? Number(stateValue.ululeFrozenBeforeMs) : null
@@ -2288,6 +2293,7 @@ function serializeMilestoneRaffles() {
   return {
     winnersPerWindow: milestoneWinnersPerWindow,
     selectedWindowKey: selectedWindow?.key || "window_1",
+    showWindowOnCards: milestoneShowWindowOnCards,
     maxEuro: MILESTONE_MAX_EUR,
     windowCount: MILESTONE_WINDOW_COUNT,
     windows
@@ -2300,6 +2306,7 @@ function serializeMilestoneStage() {
   return {
     winnersPerWindow: milestoneRaffles.winnersPerWindow,
     selectedWindowKey: milestoneRaffles.selectedWindowKey,
+    showWindowOnCards: milestoneRaffles.showWindowOnCards,
     maxEuro: milestoneRaffles.maxEuro,
     windowCount: milestoneRaffles.windowCount,
     selectedWindow
@@ -3193,14 +3200,19 @@ fastify.post("/api/backend-bruno/milestone-raffles/select", { preHandler: requir
 
 fastify.patch("/api/backend-bruno/milestone-raffles/settings", { preHandler: requireAdmin }, async (req, reply) => {
   const winnersPerWindow = Number(req.body?.winnersPerWindow)
+  const showWindowOnCards =
+    typeof req.body?.showWindowOnCards === "boolean"
+      ? req.body.showWindowOnCards
+      : milestoneShowWindowOnCards
   if (!Number.isInteger(winnersPerWindow) || winnersPerWindow < 1 || winnersPerWindow > 50) {
     reply.code(400)
     return { ok: false, error: "invalid_winners_per_window" }
   }
 
   milestoneWinnersPerWindow = winnersPerWindow
+  milestoneShowWindowOnCards = showWindowOnCards
   await saveRuntimeState()
-  pushAdminLog("update_milestone_raffle_settings", { winnersPerWindow })
+  pushAdminLog("update_milestone_raffle_settings", { winnersPerWindow, showWindowOnCards })
   return {
     ok: true,
     milestoneRaffles: serializeMilestoneRaffles()
@@ -3800,6 +3812,11 @@ fastify.register(fastifyStatic, {
 })
 
 fastify.get("/*", (req, reply) => {
+  const requestedPath = String(req.raw.url || "").split("?")[0]
+  if (path.extname(requestedPath)) {
+    reply.code(404)
+    return reply.type("text/plain; charset=utf-8").send("Asset not found")
+  }
   reply.sendFile("index.html")
 })
 

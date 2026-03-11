@@ -6,7 +6,7 @@ import useBrandLogo from "../hooks/useBrandLogo.js"
 export default function AdminMilestones() {
   const navigate = useNavigate()
   const [logoSrc] = useBrandLogo()
-  const [data, setData] = useState({ winnersPerWindow: 1, windows: [] })
+  const [data, setData] = useState({ winnersPerWindow: 1, showWindowOnCards: true, windows: [] })
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState("")
 
@@ -31,7 +31,7 @@ export default function AdminMilestones() {
         setStatus(`Erreur chargement: ${payload.error || "unknown_error"}`)
         return
       }
-      setData(payload.milestoneRaffles || { winnersPerWindow: 1, windows: [] })
+      setData(payload.milestoneRaffles || { winnersPerWindow: 1, showWindowOnCards: true, windows: [] })
     } finally {
       setLoading(false)
     }
@@ -57,7 +57,10 @@ export default function AdminMilestones() {
       const { response, payload } = await fetchJson("/api/backend-bruno/milestone-raffles/settings", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ winnersPerWindow: Number(data.winnersPerWindow || 1) })
+        body: JSON.stringify({
+          winnersPerWindow: Number(data.winnersPerWindow || 1),
+          showWindowOnCards: Boolean(data.showWindowOnCards)
+        })
       })
       if (!response.ok || !payload.ok) {
         setStatus(`Erreur réglage: ${payload.error || "unknown_error"}`)
@@ -142,11 +145,19 @@ export default function AdminMilestones() {
             value={data.winnersPerWindow}
             onChange={(e) => setData((prev) => ({ ...prev, winnersPerWindow: e.target.value }))}
           />
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={Boolean(data.showWindowOnCards)}
+              onChange={(e) => setData((prev) => ({ ...prev, showWindowOnCards: e.target.checked }))}
+            />
+            <span>Afficher la tranche sur les cartes</span>
+          </label>
           <button className="btn" onClick={saveSettings} disabled={loading}>
             Enregistrer
           </button>
         </div>
-        <p className="hint">Nombre de gagnants pour chaque tranche de 10 000 EUR.</p>
+        <p className="hint">Nombre de gagnants par tranche et affichage optionnel de la tranche sur les cartes de projection.</p>
       </section>
 
       <section className="panel">

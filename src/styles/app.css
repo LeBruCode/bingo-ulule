@@ -2187,6 +2187,19 @@ body.overlay-mode #root {
   max-width: 160px;
 }
 
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #e2e8f0;
+  font-weight: 700;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+}
+
 .mobile-control-shell {
   min-height: 100vh;
   padding: 18px 14px 30px;
@@ -2552,6 +2565,11 @@ body.overlay-mode #root {
   gap: 14px;
 }
 
+.milestone-stage-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
 .milestone-stage-card {
   border-radius: 22px;
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -2562,6 +2580,12 @@ body.overlay-mode #root {
   display: grid;
   gap: 10px;
   min-height: 138px;
+}
+
+.milestone-stage-grid.compact .milestone-stage-card {
+  min-height: 112px;
+  padding: 14px 13px;
+  gap: 8px;
 }
 
 .milestone-stage-card.winner {
@@ -2601,9 +2625,35 @@ body.overlay-mode #root {
   line-height: 1.15;
 }
 
+.milestone-stage-grid.compact .milestone-stage-card strong {
+  font-size: 1.06rem;
+}
+
+.milestone-stage-location {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: #dbe4f0;
+  font-size: 0.96rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.milestone-stage-location small {
+  color: #94a3b8;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .milestone-stage-card small {
   color: #94a3b8;
   font-size: 0.9rem;
+}
+
+.milestone-stage-grid.compact .milestone-stage-card > small {
+  font-size: 0.78rem;
 }
 
 .milestone-stage-foot {

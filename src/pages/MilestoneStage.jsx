@@ -11,13 +11,41 @@ function formatMoney(cents) {
   }).format((Number(cents || 0)) / 100)
 }
 
+function toDisplayCase(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("fr-FR")
+    .replace(/(^|[\s'-])([\p{L}])/gu, (match, prefix, letter) => `${prefix}${letter.toLocaleUpperCase("fr-FR")}`)
+}
+
+function normalizeDepartmentCode(value) {
+  return String(value || "").trim().toUpperCase()
+}
+
+function getWinnerIdentity(entry) {
+  const firstName = toDisplayCase(entry?.firstName || "Participant")
+  const city = toDisplayCase(entry?.city || "")
+  const country = toDisplayCase(entry?.country || "")
+  const departmentCode = normalizeDepartmentCode(entry?.departmentCode || "")
+  const isFrance = !country || ["France", "Fr"].includes(country)
+
+  return {
+    firstName,
+    city,
+    country,
+    departmentCode,
+    isFrance,
+    locationLabel: isFrance ? departmentCode : country
+  }
+}
+
 function formatWinner(entry) {
   if (!entry) return "Participant"
-  const firstName = entry.firstName || "Participant"
-  const city = entry.city || ""
-  const country = entry.country || ""
-  const location = city ? city : country
-  return location ? `${firstName} • ${location}` : firstName
+  const identity = getWinnerIdentity(entry)
+  if (identity.city && identity.locationLabel) return `${identity.firstName} • ${identity.city} (${identity.locationLabel})`
+  if (identity.city) return `${identity.firstName} • ${identity.city}`
+  if (identity.locationLabel) return `${identity.firstName} • ${identity.locationLabel}`
+  return identity.firstName
 }
 
 export default function MilestoneStage({ adminView = false }) {
@@ -189,7 +217,8 @@ export default function MilestoneStage({ adminView = false }) {
   const selectedWindow = stage.selectedWindow || null
   const candidates = Array.isArray(selectedWindow?.candidates) ? selectedWindow.candidates : []
   const winners = Array.isArray(selectedWindow?.winners) ? selectedWindow.winners : []
-  const previewCandidates = winners.length > 0 ? winners : candidates.slice(0, 24)
+  const showWindowOnCards = stage.showWindowOnCards !== false
+  const previewCandidates = winners.length > 0 ? winners : candidates.slice(0, showWindowOnCards ? 24 : 36)
   const hiddenCandidates = Math.max(0, candidates.length - previewCandidates.length)
   const displayedEntries = drawPhase === "idle" ? previewCandidates : stageEntries
   const suspenseLabel = useMemo(() => {
@@ -294,11 +323,14 @@ export default function MilestoneStage({ adminView = false }) {
               </div>
             </section>
 
-            <section className={`milestone-stage-grid ${winners.length > 0 ? "winners" : ""}`}>
+            <section className={`milestone-stage-grid ${winners.length > 0 ? "winners" : ""} ${showWindowOnCards ? "" : "compact"}`}>
               {displayedEntries.length === 0 ? (
                 <div className="raffle-empty">Aucun candidat éligible dans cette tranche.</div>
               ) : (
-                displayedEntries.map((entry) => (
+                displayedEntries.map((entry) => {
+                  const identity = getWinnerIdentity(entry)
+                  const locationSuffix = identity.city && identity.locationLabel ? identity.locationLabel : ""
+                  return (
                   <article
                     key={entry.id}
                     className={`milestone-stage-card ${winners.some((winner) => winner.id === entry.id) && drawPhase === "done" ? "winner" : ""} ${focusEntry?.id === entry.id ? "focus" : ""}`}
@@ -306,10 +338,25 @@ export default function MilestoneStage({ adminView = false }) {
                     <span className="milestone-stage-chip">
                       {winners.some((winner) => winner.id === entry.id) && drawPhase === "done" ? "Gagnant" : "En lice"}
                     </span>
-                    <strong>{formatWinner(entry)}</strong>
-                    <small>{formatMoney(selectedWindow.startCents)} → {formatMoney(selectedWindow.endCents)}</small>
+                    <strong>{identity.firstName}</strong>
+                    {identity.city ? (
+                      <div className="milestone-stage-location">
+                        <span>{identity.city}</span>
+                        {locationSuffix ? (
+                          <small>{`(${locationSuffix})`}</small>
+                        ) : null}
+                      </div>
+                    ) : identity.locationLabel ? (
+                      <div className="milestone-stage-location">
+                        <small>{`(${identity.locationLabel})`}</small>
+                      </div>
+                    ) : null}
+                    {showWindowOnCards ? (
+                      <small>{formatMoney(selectedWindow.startCents)} → {formatMoney(selectedWindow.endCents)}</small>
+                    ) : null}
                   </article>
-                ))
+                  )
+                })
               )}
             </section>
 
