@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import OldeupeLogo from "../components/OldeupeLogo.jsx"
 import useBrandLogo from "../hooks/useBrandLogo.js"
 
@@ -20,6 +21,7 @@ function formatWinner(entry) {
 }
 
 export default function MilestoneStage({ adminView = false }) {
+  const navigate = useNavigate()
   const [logoSrc] = useBrandLogo()
   const [stage, setStage] = useState({ selectedWindow: null, winnersPerWindow: 1 })
   const [loading, setLoading] = useState(true)
@@ -42,6 +44,18 @@ export default function MilestoneStage({ adminView = false }) {
       ;[next[i], next[j]] = [next[j], next[i]]
     }
     return next
+  }
+
+  async function fetchJson(url, options = {}) {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      ...options
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (response.status === 403 && adminView) {
+      navigate("/admin/login", { replace: true })
+    }
+    return { response, payload }
   }
 
   async function runCountdown() {
@@ -88,8 +102,7 @@ export default function MilestoneStage({ adminView = false }) {
 
     async function loadStage() {
       try {
-        const response = await fetch("/api/milestone-raffles/stage", { credentials: "same-origin" })
-        const payload = await response.json().catch(() => ({}))
+        const { response, payload } = await fetchJson("/api/milestone-raffles/stage")
         if (!response.ok || !payload.ok) {
           if (!cancelled) {
             setError(payload.error || "stage_unavailable")
@@ -127,13 +140,11 @@ export default function MilestoneStage({ adminView = false }) {
     setLoading(true)
     setStatus("")
     try {
-      const response = await fetch("/api/backend-bruno/milestone-raffles/draw", {
+      const { response, payload } = await fetchJson("/api/backend-bruno/milestone-raffles/draw", {
         method: "POST",
-        credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ windowKey: selectedWindow.key })
       })
-      const payload = await response.json().catch(() => ({}))
       if (!response.ok || !payload.ok) {
         setStatus(`Erreur tirage cagnotte : ${payload.error || "unknown_error"}`)
         return
@@ -152,13 +163,11 @@ export default function MilestoneStage({ adminView = false }) {
     setLoading(true)
     setStatus("")
     try {
-      const response = await fetch("/api/backend-bruno/milestone-raffles/reset", {
+      const { response, payload } = await fetchJson("/api/backend-bruno/milestone-raffles/reset", {
         method: "POST",
-        credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ windowKey: selectedWindow.key })
       })
-      const payload = await response.json().catch(() => ({}))
       if (!response.ok || !payload.ok) {
         setStatus(`Erreur réinitialisation tirage cagnotte : ${payload.error || "unknown_error"}`)
         return
